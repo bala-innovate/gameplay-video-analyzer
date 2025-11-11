@@ -65,12 +65,14 @@ export default function App() {
               onSchemaLoaded={onSchemaLoaded}
               onAnalysisComplete={(data) => setAnalysisResults(data)}
               modelPath="/models/model.tflite"
+              backendUrl="http://127.0.0.1:5000"  //backendurl
               schemaLoaded={!!schema}
             />
             <AnnotationTimeline hasSource={true} />
-            {analysisResults && (
+
+            {/* {analysisResults && (
               <GraphsPanel results={analysisResults} onClear={() => setAnalysisResults(null)} />
-            )}
+            )} */} 
           </>
         )}
       </main>

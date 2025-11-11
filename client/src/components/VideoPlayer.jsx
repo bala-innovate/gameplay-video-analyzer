@@ -17,6 +17,7 @@ export default function VideoPlayer({
   onAnalysisComplete,
   modelPath = "/models/model.tflite",
   schemaLoaded = false,
+  backendUrl = "http://127.0.0.1:5000",  //backendurl
 }) {
   const videoElRef = useRef(null);
   const playerRef = useRef(null);
@@ -55,6 +56,7 @@ export default function VideoPlayer({
 
   // Load Schema (CSV)
   const schemaInputRef = useRef(null);
+  const [schemaFile, setSchemaFile] = useState(null);
 
   // Analyze state
   const [analyzing, setAnalyzing] = useState(false);
@@ -387,7 +389,7 @@ export default function VideoPlayer({
       return out.map((s) => s.trim());
     };
 
-    const header = parseCSVLine(lines[0]).map((h) => h.toLowerCase());
+    const header = parseCSVLine(lines[5]).map((h) => h.toLowerCase());
     const idxTag = header.indexOf("tagname");
     const idxStart = header.indexOf("starttime");
     const idxEnd = header.indexOf("endtime");
@@ -428,7 +430,9 @@ export default function VideoPlayer({
   const onClickLoadSchema = () => schemaInputRef.current?.click();
   const onSchemaChange = (e) => {
     const f = e.target.files?.[0];
-    if (f) handleSchemaFile(f);
+    if (f) 
+      setSchemaFile(f);
+    handleSchemaFile(f);
     e.target.value = "";
   };
 
@@ -590,43 +594,88 @@ export default function VideoPlayer({
 
   const runAnalysis = async () => {
     if (isYT || !schemaLoaded || analyzing) return;
-    try {
-      setAnalyzing(true);
-      setAnalyzeMsg("Preparing…");
+    if (isYT || !schemaLoaded || analyzing || !schemaFile) return;
+  try {
+    setAnalyzing(true);
+    setAnalyzeMsg("Contacting backend…");
 
-      await tf.ready();
-      const detector = await ensureDetector();
+    const payload = {
+      source: src,
+      annotations: annSnapshot,
+      selection: hasSelection ? { start: rangeL, end: rangeR } : null,
+      clientTime: new Date().toISOString(),
+    };
 
-      const rows = annSnapshot.filter((a) => Number.isFinite(a.startKey));
-      if (rows.length === 0) {
-        setAnalyzeMsg("No annotated windows found.");
-        setAnalyzing(false);
-        return;
-      }
+    // const res = await fetch(`${backendUrl}/analyze`, {
+    //   method: "POST",
+    //   headers: { "Content-Type": "application/json" },
+    //   body: JSON.stringify(payload),
+    // });
 
-      const results = {}; // { TAG: [counts...] }
+    const res = await fetch(`${backendUrl}/analyze`, {
+  method: "POST",
+  // Send the exact CSV file as the body
+   headers: { "Content-Type": "text/csv" },
+  body: schemaFile,
+ });
 
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        setAnalyzeMsg(`Analyzing ${i + 1}/${rows.length}…`);
-
-        const canvas = await grabCanvasAt(row.startKey);
-        const dets = await detector.detect(canvas);
-        const count = countDefendersInFront(dets.detections || []);
-
-        if (!results[row.tagName]) results[row.tagName] = [];
-        results[row.tagName].push(count);
-      }
-
-      setAnalyzeMsg("Done.");
-      onAnalysisComplete?.(results);
-    } catch (err) {
-      console.error(err);
-      setAnalyzeMsg("Analysis failed (see console).");
-    } finally {
-      setAnalyzing(false);
-      setTimeout(() => setAnalyzeMsg(""), 1500);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
     }
+
+    const data = await res.json();
+    setAnalyzeMsg(data.message || "Done.");
+    onAnalysisComplete?.(data); 
+
+
+
+  } catch (err) {
+    console.error(err);
+    setAnalyzeMsg("Analysis failed (see console).");
+  } finally {
+    setAnalyzing(false);
+    // setTimeout(() => setAnalyzeMsg(""), 1500); #uncomment if you want message to go away 
+  }
+
+    // if (isYT || !schemaLoaded || analyzing) return;
+    // try {
+    //   setAnalyzing(true);
+    //   setAnalyzeMsg("Preparing…");
+
+    //   await tf.ready();
+    //   const detector = await ensureDetector();
+
+    //   const rows = annSnapshot.filter((a) => Number.isFinite(a.startKey));
+    //   if (rows.length === 0) {
+    //     setAnalyzeMsg("No annotated windows found.");
+    //     setAnalyzing(false);
+    //     return;
+    //   }
+
+    //   const results = {}; // { TAG: [counts...] }
+
+    //   for (let i = 0; i < rows.length; i++) {
+    //     const row = rows[i];
+    //     setAnalyzeMsg(`Analyzing ${i + 1}/${rows.length}…`);
+
+    //     const canvas = await grabCanvasAt(row.startKey);
+    //     const dets = await detector.detect(canvas);
+    //     const count = countDefendersInFront(dets.detections || []);
+
+    //     if (!results[row.tagName]) results[row.tagName] = [];
+    //     results[row.tagName].push(count);
+    //   }
+
+    //   setAnalyzeMsg("Done.");
+    //   onAnalysisComplete?.(results);
+    // } catch (err) {
+    //   console.error(err);
+    //   setAnalyzeMsg("Analysis failed (see console).");
+    // } finally {
+    //   setAnalyzing(false);
+    //   setTimeout(() => setAnalyzeMsg(""), 1500);
+    // }
   };
 
   // =================== RENDER ===================
@@ -695,7 +744,8 @@ export default function VideoPlayer({
               className="src__btn"
               type="button"
               onClick={runAnalysis}
-              disabled={isYT || !schemaLoaded || analyzing}
+              // disabled={isYT || !schemaLoaded || analyzing}
+              disabled={isYT || !schemaLoaded || !schemaFile || analyzing}
               title={isYT ? "YouTube sources are preview-only; analysis disabled" : !schemaLoaded ? "Load a schema to enable Analyze" : analyzing ? "Analyzing…" : "Analyze"}
             >
               {analyzing ? "Analyzing…" : "Analyze"}
