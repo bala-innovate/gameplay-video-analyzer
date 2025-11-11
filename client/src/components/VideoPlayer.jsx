@@ -599,26 +599,21 @@ export default function VideoPlayer({
     setAnalyzing(true);
     setAnalyzeMsg("Contacting backend…");
 
-    const payload = {
-      source: src,
-      annotations: annSnapshot,
-      selection: hasSelection ? { start: rangeL, end: rangeR } : null,
-      clientTime: new Date().toISOString(),
-    };
+//     const res = await fetch(`${backendUrl}/analyze`, {
+//   method: "POST",
+//   // Send the exact CSV file as the body
+//    headers: { "Content-Type": "text/csv" },
+//   body: schemaFile,
+//  });
 
-    // const res = await fetch(`${backendUrl}/analyze`, {
-    //   method: "POST",
-    //   headers: { "Content-Type": "application/json" },
-    //   body: JSON.stringify(payload),
-    // });
+    const formData = new FormData();
+    formData.append("file", schemaFile, schemaFile.name); 
+    formData.append("filename", schemaFile.name);              
 
     const res = await fetch(`${backendUrl}/analyze`, {
-  method: "POST",
-  // Send the exact CSV file as the body
-   headers: { "Content-Type": "text/csv" },
-  body: schemaFile,
- });
-
+      method: "POST",
+      body: formData,
+    });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`HTTP ${res.status}: ${text}`);

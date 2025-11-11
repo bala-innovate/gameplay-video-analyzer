@@ -12,15 +12,28 @@ CORS(
 
 @app.post("/analyze")
 def analyze():
-    csv_bytes = request.data or b""
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "No CSV uploaded"}), 400
+
+    csv_file = request.files["file"]
+    filename = request.form.get("filename") or csv_file.filename
+
+    print(f"Received file: {filename}")
+    csv_bytes = csv_file.read()
     csv_text = csv_bytes.decode("utf-8", errors="replace")
-    print("\n=== RECEIVED CSV PREVIEW ===")
-    print(csv_text[:300])
+
+    print("\n=== CSV RECEIVED ===")
+    print(f"Filename: {filename}")
+    print("--- CSV Preview (first 10 lines) ---")
+    lines = csv_text.splitlines()
+    for line in lines[:10]:
+        print(line)
     print("=== END PREVIEW ===\n")
+
     return jsonify({
         "ok": True,
-        "bytes": len(csv_bytes),
-        "message": "Received CSV. Backend connected.",
+        "filename": filename,
+        "message": f"Received CSV '{filename}'",
     })
 if __name__ == '__main__':
     app.run()
