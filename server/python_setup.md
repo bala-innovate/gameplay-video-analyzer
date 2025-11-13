@@ -1,0 +1,12 @@
+# Setting up the anaconda environment
+
+Open the terminal and change to server directory. Then write the following command:
+
+- conda env create -f environment.yml
+
+- Install PyTorch using the command from https://pytorch.org/get-started/locally/
+
+
+
+
+
