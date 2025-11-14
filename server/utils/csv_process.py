@@ -19,7 +19,7 @@ class CSVVideoInfoProcessor:
         self.video_name = None
         self.move_annotations = self.process_csv(self.move_annot_filepath)
         self.huddle_annotations = self.process_csv(self.huddle_annot_filepath)
-        self.download_youtube_video()
+        self.video_exists_on_yt = self.download_youtube_video()
         return
     
     def open_csv(self, file_path):
@@ -46,9 +46,6 @@ class CSVVideoInfoProcessor:
                 str: URL of the YouTube video to download
                 pd dataframe: video_annotations with appropriate headers for the annotation data
         '''
-        # if csv_data:
-        #     self.csv_data = csv_data
-        #     df = self.csv_data
 
         self.csv_data = self.open_csv(file_path)
         df = self.csv_data
@@ -78,16 +75,19 @@ class CSVVideoInfoProcessor:
                 url (str): The URL of the YouTube video to download.
                 download_dir (str): The directory where the video will be saved.
             Returns:
-                str: The path to the downloaded video file.
+                True or False (bool): Success or failure 
         '''
 
         print(f"Video URL: {self.video_url}")
 
-        self.video_name = self.video_url.split('/')[-1].split('?')[0]
+        if self.video_url.__contains__('?'):
+            self.video_name = self.video_url.split('/')[-1].split('?')[0]
+        else:
+            self.video_name = self.video_url.split('/')[-1]
         self.video_path = f'{self.VIDEOS_DIR}/{self.video_name}.mp4'
         if os.path.exists(self.video_path):
             print(f"Video already exists at {self.video_path}. Skipping download.")
-            return
+            return True
         
         ydl_opts = {
             'outtmpl': os.path.join(self.VIDEOS_DIR, '%(id)s.%(ext)s'),
@@ -95,23 +95,29 @@ class CSVVideoInfoProcessor:
             'merge_output_format': 'mp4',
             'quiet': True,
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(self.video_url, download=False)
-            video_path = ydl.prepare_filename(info)
-            if not video_path.endswith('.mp4'):
-                video_path = os.path.splitext(video_path)[0] + '.mp4'
-            if os.path.exists(video_path):
-                print(f"Video already exists at {video_path}. Skipping download.")
+        # try:
+        #     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        #         info = ydl.extract_info(self.video_url, download=False)
+        #         video_path = ydl.prepare_filename(info)
+        #         if not video_path.endswith('.mp4'):
+        #             video_path = os.path.splitext(video_path)[0] + '.mp4'
+        #         if os.path.exists(video_path):
+        #             print(f"Video already exists at {video_path}. Skipping download.")
+        #             self.video_path = video_path
+        #             self.video_name = os.path.basename(video_path).split('.')[0]
+        #             return True
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.video_url, download=True)
+                video_path = ydl.prepare_filename(info)
+            
+                if not video_path.endswith('.mp4'):
+                    video_path = os.path.splitext(video_path)[0] + '.mp4'
                 self.video_path = video_path
                 self.video_name = os.path.basename(video_path).split('.')[0]
-                return 
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(self.video_url, download=True)
-            video_path = ydl.prepare_filename(info)
-        
-            if not video_path.endswith('.mp4'):
-                video_path = os.path.splitext(video_path)[0] + '.mp4'
-            self.video_path = video_path
-            self.video_name = os.path.basename(video_path).split('.')[0]
-            return
+                print(f'Video downloaded at location: {self.VIDEOS_DIR}')
+                return True
+        except Exception as e:
+            print(f"Error downloading video: {e}")
+            return False

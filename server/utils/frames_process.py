@@ -3,11 +3,15 @@ from tqdm import tqdm
 from .csv_process import CSVVideoInfoProcessor
 from .yolo_detection import ImageDetectionHelpers
 from .huddle_frame_process import HuddleFrameProcessor
+from team_learning_and_detection import TeamRepresentationLearning
 
 class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
 
     def __init__(self, move_annot_filepath, huddle_annot_filepath, VIDEOS_DIR, yolo_model_path=None):
         CSVVideoInfoProcessor.__init__(self, move_annot_filepath, huddle_annot_filepath, VIDEOS_DIR)
+        if not self.video_exists_on_yt:
+            print(f'Error downloading URL {self.video_url}')
+            return
         HuddleFrameProcessor.__init__(self)
 
         # Map each huddle frame to the move frames in the corresponding play
@@ -18,47 +22,12 @@ class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
         self.huddle_to_moves_map = self.match_huddle_times_with_moves(fps)
         
         # Map the huddle frame number to the relevant (a decent huddle frame that can be used) frame 
+        print()
+        print('Loading and storing suitable huddle frames')
         self.huddle_frames = self.store_huddle_frames(yolo_model_path)
 
         return
-    
-    # # Function to save frames - saves frames from play, and only till before the last move of the play is made
-    # # Dict keys: start frames, Dict values: list of (action_tag, action_frame) in that play
-    # def save_play_frames(self, save_dir, save_annotations=False, model_path=None, save_every=10):
-        
-    #     # Load required detection model
-    #     detector = ImageDetectionHelpers(model_path)
-
-    #     # Open video
-    #     cap = cv2.VideoCapture(self.video_path)
-    #     fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-    #     # Start processing the video following the start_time to moves dictionary    
-    #     for i, (huddle_frame_num, moves_list) in enumerate(tqdm(self.huddle_to_moves_map.items())):
-    #         if not moves_list:
-    #             continue
-
-    #         last_frame_number_in_play = moves_list[-1][1]
-    #         start_frame = huddle_frame_num + fps//3
-    #         # Setting frame
-    #         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    #         frame_count = 0
-    #         max_frames_to_capture = last_frame_number_in_play - start_frame 
-    #         while frame_count <= max_frames_to_capture:
-    #             ret, frame = cap.read()
-    #             if not ret:
-    #                 break
-    #             if frame_count % save_every == 0:
-    #                 img_name = f'{self.video_name}_frame_{start_frame + frame_count}.jpg'
-    #                 cv2.imwrite(f'{save_dir}/{img_name}', frame)
-    #                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    #                 if save_annotations:
-    #                     detector.detect_and_save_annotations(frame, save_dir, img_name)
-    #             frame_count += 1
-
-    #     cap.release()
-    #     del(detector)
-    #     return
+  
 
     # Function to convert time to frame number
     def convert_timestamp_to_frames(self, timestamp, fps):
@@ -95,10 +64,11 @@ class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
         return int(time_in_seconds * fps)
     
 
-    # Defining huddle_frame to move_frame dict: {huddle_frame_number: [(move_tag, move_frame_num), ...], ...}
+    # Defining huddle_frame to move_frame dict: {huddle_frame_number: [(move_tag, move_frame_num, down_number), ...], ...}
     def match_huddle_times_with_moves(self, fps=60):
         ''' 
-            Creates a dictionary that stores huddle times as dict keys and list of moves made in the corresponding play as dict values 
+            Creates a dictionary that stores huddle times as dict keys and list of moves made in the corresponding play as dict values.
+            Considers only ATTACKING MOVES for now 
             Uses:
                 move_annotations: dataframe containing annotations of moves
                 huddle_annotations: dataframe containing timestamps of start times
@@ -111,6 +81,7 @@ class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
         for _, row in self.move_annotations.iterrows():
             move_start_time = row['StartTime']
             move_tag = row['TagName']
+            down_number = row['Down']
 
             # Only checking for attacking moves FOR NOW
             if move_tag not in ["SPIN", "JUKE", "PASS_THROW", "WALL_MOVE", "STIFF_ARM", "HURDLE"]:
@@ -127,7 +98,7 @@ class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
                         closest_huddle_time = huddle_time
 
             if closest_huddle_time is not None:
-                huddle_to_moves_map[closest_huddle_time].append((move_tag, move_start_frame))
+                huddle_to_moves_map[closest_huddle_time].append((move_tag, move_start_frame, down_number))
                 huddle_to_moves_map[closest_huddle_time] = sorted(huddle_to_moves_map[closest_huddle_time], key=lambda x: x[1])
         
         return huddle_to_moves_map
@@ -164,8 +135,6 @@ class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
 
         # Open video
         cap = cv2.VideoCapture(self.video_path)
-        # fps = int(cap.get(cv2.CAP_PROP_FPS))
-        # print(f"Video FPS: {fps}")
 
         huddle_frames = {}
         # last_move_frame_num_before_huddle = None
@@ -184,3 +153,46 @@ class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
         cap.release()
         del(detector)
         return huddle_frames
+    
+
+    # Loading start_frame to action_frame dict: {start_frame_number: [(action_tag, action_frame), ...], ...}
+    # Dict keys: start frames, Dict values: list of (action_tag, action_frame) in that play
+    def analyze_move_frames(self, team_representations: TeamRepresentationLearning):
+            
+        # Open video
+        cap = cv2.VideoCapture(self.video_path)
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        print(f"Video FPS: {fps}")
+
+        moves_2_defenderCount_dict = {}
+        moves_2_timeSincePlayBegan = {}
+
+        # Start processing the video following the start_time to moves dictionary    
+        for i, (start_time_frame, moves) in enumerate(tqdm(self.huddle_to_moves_map.items())):
+            if not moves:
+                continue
+            
+            huddle_frame = self.huddle_frames[start_time_frame]
+            defending_team = team_representations.define_defence(huddle_frame)
+            
+            for move in moves:
+                # Each move is of the form (action_tag, action_frame_number, down_number)
+                (action_tag, move_frame_number, down_number) = move
+
+                cap.set(cv2.CAP_PROP_POS_FRAMES, move_frame_number)
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # Count defenders in frame
+                defenders_count = team_representations.count_defenders(frame, defending_team)
+                # Save move to defender count in a dictionary
+                moves_2_defenderCount_dict[move_frame_number] = (action_tag, defenders_count)    
+                # Time in seconds (whole numbers) 
+                # moves_2_timeSincePlayBegan[move_frame_number] = (action_tag, round((move_frame_number - start_time_frame)/fps, 3), down_number)
+                # Time in frames (multiples of 60)
+                moves_2_timeSincePlayBegan[move_frame_number] = (action_tag, move_frame_number - start_time_frame, down_number)     
+                
+        cap.release() 
+        return moves_2_defenderCount_dict, moves_2_timeSincePlayBegan
+    

@@ -26,7 +26,7 @@ class TeamRepresentationLearning:
         # Load pre-trained model but exclude the fully connected layer 
         # Make sure to check the nomenclature of the final layers of the model and remove accordingly
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        print(self.device)
+        print(f'Device used by PyTorch: {self.device}')
 
         # Load model onto device of choice (CPU or GPU)
         resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
@@ -115,11 +115,11 @@ class TeamRepresentationLearning:
             proba = self.teams_gmm.predict_proba(feat.reshape(1, -1))[0]  # length 2, sums to 1
             # confidence = float(np.max(proba))  # e.g., 0.0–1.0
             team_label = np.argmax(proba)
-            return (team_label, proba)
+            return [team_label, proba]
 
         # Hard assignment (team 0 or 1)
-        team_label = int(self.teams_gmm.predict(feat.reshape(1, -1))[0])
-        return (team_label)
+        team_label = int(self.team_gmm.predict(feat.reshape(1, -1))[0])
+        return [team_label]
 
 
     def define_defence(self, frame):
@@ -162,3 +162,31 @@ class TeamRepresentationLearning:
         vals, counts = np.unique(labels, return_counts=True)
         attacking_team = vals[np.argmax(counts)]
         return int(1 - attacking_team)
+    
+    
+    def count_defenders(self, frame, defending_team):
+        boxes = self.yolo_detector.frame_detection(frame)
+        labels = []
+        for box in boxes:
+            x1,y1,x2,y2 = map(int, box)
+            w = x2 - x1
+            h = y2 - y1
+            x, y = x1, y1
+            
+            player_crop = frame[y:y+h, x: x+w]
+            pred = self.classify_team(player_crop)
+            if pred is None:
+                continue
+            team_label = pred[0]
+            probs = pred[1] if len(pred)==2 else None
+            labels.append(team_label)
+        
+        vals, counts = np.unique(labels, return_counts=True)
+        # Counts[index of defending team]
+        # Model is not always detecting defenders in the frame
+        try:
+            defenders_count = counts[vals.tolist().index(defending_team)]
+        except:
+            return 0
+        
+        return defenders_count
