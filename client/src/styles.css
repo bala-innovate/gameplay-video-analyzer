@@ -150,3 +150,121 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:Inter,ui-s
 .pagerBtn:hover { background:#182034; }
 .pagerBtn:disabled { cursor:not-allowed; opacity:.6; }
 .pagerLabel { align-self:center; color:var(--muted); font-size:12px; }
+
+
+/* === Graphs Panel (vertical, players vs probability) === */
+
+.gp {
+  margin-top: 20px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.gp__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.gp__header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+
+.gp__clear {
+  background:#4a2b2b;
+  color:#ffb3b3;
+  border:1px solid #5a3434;
+  border-radius:8px;
+  padding:6px 10px;
+  cursor:pointer;
+  font-size:12px;
+}
+
+.gp__clear:hover {
+  background:#5c2f2f;
+}
+
+.gp__empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+/* Main chart area */
+.gp__matrix {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 8px 4px 4px;
+  overflow-x: auto;
+}
+
+/* Each x-axis bucket (number of players) */
+.gp__xcol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 40px;
+}
+
+/* Vertical stacked bar */
+.gp__xbar {
+  width: 32px;
+  height: 160px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #0c0f14;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column-reverse; /* bottom = 0%, top = 100% */
+}
+
+/* Segment inside bar (one move) */
+.gp__seg {
+  width: 100%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+
+.gp__seg--empty {
+  height: 100%;
+  background: #151b2f;
+  color: var(--muted);
+}
+
+.gp__segLabel {
+  padding: 0 2px;
+  color: #eaeef7;
+}
+
+/* X-axis labels (number of players) */
+.gp__xlabel {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Axis captions */
+.gp__axes {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.gp__axisX {
+  align-self: flex-end;
+}
+
+.gp__axisY {
+  align-self: flex-start;
+}

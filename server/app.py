@@ -1,5 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from pathlib import Path
+import json
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -37,10 +39,35 @@ def analyze():
     #     print(line)
     # print("=== END PREVIEW ===\n")
 
+    path_players = Path("results") / "move_policy_by_defenderCount_bin.json"
+    path_time = Path("results") / "move_policy_by_frameCountSincePlayStart_bin.json"
+
+    if not path_players.exists():
+        return jsonify({
+            "ok": False,
+            "error": f"Results file not found: {path_players}"
+        }), 500
+
+    if not path_time.exists():
+        return jsonify({
+            "ok": False,
+            "error": f"Results file not found: {path_time}"
+        }), 500
+
+    with path_players.open("r", encoding="utf-8") as f:
+        probs_players = json.load(f)
+
+    with path_time.open("r", encoding="utf-8") as f:
+        probs_time = json.load(f)
+
+    print(f"Received file: {filename}")
+
     return jsonify({
         "ok": True,
         "filename": filename,
         "message": f"Received CSV '{filename}' and processed the huddle frames",
+        "probs_by_players": probs_players, 
+        "probs_by_time": probs_time,        
     })
 if __name__ == '__main__':
     app.run()

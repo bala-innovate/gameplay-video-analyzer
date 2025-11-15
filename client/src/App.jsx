@@ -59,6 +59,7 @@ export default function App() {
         {!source && <Loader onLoad={onLoad} />}
         {source && (
           <>
+          
             <VideoPlayer
               src={source.src}
               onTimeUpdate={() => {}}
@@ -68,11 +69,13 @@ export default function App() {
               backendUrl="http://127.0.0.1:5000"  //backendurl
               schemaLoaded={!!schema}
             />
-            <AnnotationTimeline hasSource={true} />
-
-            {/* {analysisResults && (
+            {analysisResults && (
               <GraphsPanel results={analysisResults} onClear={() => setAnalysisResults(null)} />
-            )} */} 
+            )} 
+            <AnnotationTimeline hasSource={true} />
+           
+
+            
           </>
         )}
       </main>

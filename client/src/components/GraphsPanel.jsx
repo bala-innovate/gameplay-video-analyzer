@@ -1,48 +1,202 @@
 import React from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  CartesianGrid,
+  ResponsiveContainer,
+} from "recharts";
 
-export default function GraphsPanel({ results, onClear }) {
-  const hasData = results && typeof results === "object" && Object.keys(results).length > 0;
+const COLORS = [
+  "#4da3ff",
+  "#ff9800",
+  "#9c27b0",
+  "#4caf50",
+  "#f44336",
+  "#ffc107",
+  "#00bcd4",
+  "#e91e63",
+];
 
-  const downloadJSON = () => {
-    const blob = new Blob([JSON.stringify(results, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `analysis_${Date.now()}.json`;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  };
+// Turn { "0": [{move,p},...], ... } into [{ xKey, MOVE1, MOVE2, ... }, ...]
+function buildLineData(obj, xKeyName) {
+  if (!obj || typeof obj !== "object") return { data: [], moves: [] };
+
+  const moveSet = new Set();
+
+  const rawPoints = Object.entries(obj).map(([xStr, rows]) => {
+    const xVal = Number(xStr);
+    const arr = Array.isArray(rows) ? rows : [];
+
+    const point = { [xKeyName]: xVal };
+
+    arr.forEach((r) => {
+      const move = String(r.move || r.tag || r.label || "UNKNOWN");
+      const p = Number(r.p || r.prob || r.probability || 0);
+      moveSet.add(move);
+      point[move] = p;
+    });
+
+    return point;
+  });
+
+  const data = rawPoints.sort((a, b) => a[xKeyName] - b[xKeyName]);
+  const moves = Array.from(moveSet);
+  return { data, moves };
+}
+
+function ProbLineChart({
+  dataObj,
+  xKey,
+  xLabel,
+  title,
+  labelPrefix,
+}) {
+  if (!dataObj) return null;
+
+  const { data, moves } = buildLineData(dataObj, xKey);
+
+  if (!data.length || !moves.length) {
+    return (
+      <div className="gp__chartWrap">
+        <h4 className="gp__chartTitle">{title}</h4>
+        <div className="gp__empty">No data for this chart.</div>
+      </div>
+    );
+  }
 
   return (
-    <section className="timeline" style={{ marginTop: 20 }}>
-      <h2>Graphs</h2>
+    <div className="gp__chartWrap">
+      <h4 className="gp__chartTitle">{title}</h4>
+      <div style={{ width: "100%", height: 280 }}>
+        <ResponsiveContainer>
+          <LineChart
+            data={data}
+            margin={{ top: 10, right: 20, left: 0, bottom: 30 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#2b3240" />
+            <XAxis
+              dataKey={xKey}
+              tick={{ fill: "#a8b3c7", fontSize: 12 }}
+              label={{
+                value: xLabel,
+                position: "insideBottom",
+                offset: -20,
+                fill: "#a8b3c7",
+                fontSize: 12,
+              }}
+            />
+            <YAxis
+              tick={{ fill: "#a8b3c7", fontSize: 12 }}
+              tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+              label={{
+                value: "Probability",
+                angle: -90,
+                position: "insideLeft",
+                offset: 10,
+                fill: "#a8b3c7",
+                fontSize: 12,
+              }}
+              domain={[0, 1]}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "#1a1f29",
+                border: "1px solid #2b3240",
+                borderRadius: 8,
+                color: "#eaeef7",
+              }}
+              formatter={(value, name) => [
+                `${(value * 100).toFixed(1)}%`,
+                name,
+              ]}
+              labelFormatter={(label) =>
+                labelPrefix ? `${labelPrefix}: ${label}` : String(label)
+              }
+            />
+            <Legend
+              layout="vertical" verticalAlign="middle" align="right"
+              wrapperStyle={{ paddingLeft: 20, color: "#a8b3c7", fontSize: 12,
+              }}
+            />
 
-      {!hasData ? (
-        <p className="timeline__empty">Run <strong>Analyze</strong> to see results here.</p>
-      ) : (
-        <>
-          <div className="timeline__buttons" style={{ gap: 8, marginBottom: 12 }}>
-            <button className="btn--export" onClick={downloadJSON}>Export JSON</button>
-            <button className="btn--danger" onClick={onClear}>Clear Results</button>
-          </div>
-
-          {/* Simple textual preview until charts are implemented */}
-          <div className="vp" style={{ padding: 16 }}>
-            {Object.entries(results).map(([tag, arr]) => (
-              <div key={tag} style={{ marginBottom: 10 }}>
-                <div style={{ fontWeight: 600 }}>{tag}</div>
-                <div className="mono" style={{ color: "var(--muted)" }}>
-                  Counts: [{Array.isArray(arr) ? arr.join(", ") : ""}]
-                </div>
-              </div>
+            {moves.map((move, idx) => (
+              <Line
+                key={move}
+                type="monotone"
+                dataKey={move}
+                stroke={COLORS[idx % COLORS.length]}
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                activeDot={{ r: 5 }}
+                connectNulls
+              />
             ))}
-          </div>
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
 
-          {/* Placeholder for future charts */}
-          <div className="timeline__empty" style={{ marginTop: 8 }}>
-            {/* Charts coming after Analyze is implemented. */}
-          </div>
-        </>
-      )}
+export default function GraphsPanel({ results, onClear }) {
+  const playersObj =
+    results?.probs_by_players ??
+    results?.probsPlayers ??
+    results?.probs_defenderCount;
+
+  const timeObj =
+    results?.probs_by_time ??
+    results?.probsTime ??
+    results?.probs_timeSinceDown;
+
+  if (!playersObj && !timeObj) {
+    return (
+      <section className="gp">
+        <div className="gp__header">
+          <h3>Analysis</h3>
+          {onClear && (
+            <button className="gp__clear" onClick={onClear}>
+              Clear
+            </button>
+          )}
+        </div>
+        <p className="gp__empty">No results to display.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="gp">
+      <div className="gp__header">
+        <h3>Analysis</h3>
+        {onClear && (
+          <button className="gp__clear" onClick={onClear}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      <div className="gp__grid">
+        <ProbLineChart
+          dataObj={playersObj}
+          xKey="players"
+          xLabel="Number of players"
+          title="Probability vs Number of Players"
+          labelPrefix="Players"
+        />
+
+        <ProbLineChart
+          dataObj={timeObj}
+          xKey="time"
+          xLabel="Time since down started (s)"
+          title="Probability vs Time Since Down Started"
+          labelPrefix="Time (s)"
+        />
+      </div>
     </section>
   );
 }
