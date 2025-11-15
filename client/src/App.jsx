@@ -8,6 +8,7 @@ export default function App() {
   const [source, setSource] = useState(null);   // { src, name, isURL }
   const [schema, setSchema] = useState(null);   // { name }
   const [analysisResults, setAnalysisResults] = useState(null); // { [tagName]: number[] }
+  const [startTimesName, setStartTimesName] = useState(null);
 
   const onLoad = ({ src, name, isURL }) => {
     setSource({ src, name, isURL });
@@ -68,6 +69,7 @@ export default function App() {
               modelPath="/models/model.tflite"
               backendUrl="http://127.0.0.1:5000"  //backendurl
               schemaLoaded={!!schema}
+              onStartTimesLoaded={setStartTimesName} 
             />
             {analysisResults && (
               <GraphsPanel results={analysisResults} onClear={() => setAnalysisResults(null)} />

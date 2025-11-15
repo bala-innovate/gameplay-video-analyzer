@@ -18,6 +18,7 @@ export default function VideoPlayer({
   modelPath = "/models/model.tflite",
   schemaLoaded = false,
   backendUrl = "http://127.0.0.1:5000",  //backendurl
+  onStartTimesLoaded,
 }) {
   const videoElRef = useRef(null);
   const playerRef = useRef(null);
@@ -57,6 +58,10 @@ export default function VideoPlayer({
   // Load Schema (CSV)
   const schemaInputRef = useRef(null);
   const [schemaFile, setSchemaFile] = useState(null);
+
+  // Load Start Time(CSV)
+  const startTimesInputRef = useRef(null);
+  const [startTimesFile, setStartTimesFile] = useState(null);
 
   // Analyze state
   const [analyzing, setAnalyzing] = useState(false);
@@ -138,7 +143,7 @@ export default function VideoPlayer({
       if (playerRef.current) {
         try {
           playerRef.current.dispose();
-        } catch {}
+        } catch { }
         playerRef.current = null;
       }
     },
@@ -148,7 +153,7 @@ export default function VideoPlayer({
   const play = async () => {
     try {
       await playerRef.current?.play();
-    } catch {}
+    } catch { }
   };
   const pause = () => playerRef.current?.pause();
   const togglePlay = () => (isPlaying ? pause() : play());
@@ -430,7 +435,7 @@ export default function VideoPlayer({
   const onClickLoadSchema = () => schemaInputRef.current?.click();
   const onSchemaChange = (e) => {
     const f = e.target.files?.[0];
-    if (f) 
+    if (f)
       setSchemaFile(f);
     handleSchemaFile(f);
     e.target.value = "";
@@ -595,43 +600,47 @@ export default function VideoPlayer({
   const runAnalysis = async () => {
     if (isYT || !schemaLoaded || analyzing) return;
     if (isYT || !schemaLoaded || analyzing || !schemaFile) return;
-  try {
-    setAnalyzing(true);
-    setAnalyzeMsg("Contacting backend…");
+    try {
+      setAnalyzing(true);
+      setAnalyzeMsg("Contacting backend…");
 
-//     const res = await fetch(`${backendUrl}/analyze`, {
-//   method: "POST",
-//   // Send the exact CSV file as the body
-//    headers: { "Content-Type": "text/csv" },
-//   body: schemaFile,
-//  });
+      //     const res = await fetch(`${backendUrl}/analyze`, {
+      //   method: "POST",
+      //   // Send the exact CSV file as the body
+      //    headers: { "Content-Type": "text/csv" },
+      //   body: schemaFile,
+      //  });
 
-    const formData = new FormData();
-    formData.append("file", schemaFile, schemaFile.name); 
-    formData.append("filename", schemaFile.name);              
+      const formData = new FormData();
+formData.append("file", schemaFile, schemaFile.name);
+formData.append("filename", schemaFile.name);
 
-    const res = await fetch(`${backendUrl}/analyze`, {
-      method: "POST",
-      body: formData,
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`HTTP ${res.status}: ${text}`);
+if (startTimesFile) {
+  formData.append("start_times", startTimesFile, startTimesFile.name); // 👈 NEW
+}
+
+      const res = await fetch(`${backendUrl}/analyze`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+
+      const data = await res.json();
+      setAnalyzeMsg(data.message || "Done.");
+      onAnalysisComplete?.(data);
+
+
+
+    } catch (err) {
+      console.error(err);
+      setAnalyzeMsg("Analysis failed (see console).");
+    } finally {
+      setAnalyzing(false);
+      // setTimeout(() => setAnalyzeMsg(""), 1500); #uncomment if you want message to go away 
     }
-
-    const data = await res.json();
-    setAnalyzeMsg(data.message || "Done.");
-    onAnalysisComplete?.(data); 
-
-
-
-  } catch (err) {
-    console.error(err);
-    setAnalyzeMsg("Analysis failed (see console).");
-  } finally {
-    setAnalyzing(false);
-    // setTimeout(() => setAnalyzeMsg(""), 1500); #uncomment if you want message to go away 
-  }
 
     // if (isYT || !schemaLoaded || analyzing) return;
     // try {
@@ -735,12 +744,36 @@ export default function VideoPlayer({
               Load Schema
             </button>
 
+            {/* Hidden input for start_times */}
+            <input
+              ref={startTimesInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) {
+                  setStartTimesFile(f);
+                  onStartTimesLoaded?.(f.name);
+                }
+                e.target.value = "";
+              }}
+            />
+
+            <button
+              className="src__btn"
+              type="button"
+              onClick={() => startTimesInputRef.current?.click()}
+            >
+              Load Start Times
+            </button>
+
             <button
               className="src__btn"
               type="button"
               onClick={runAnalysis}
               // disabled={isYT || !schemaLoaded || analyzing}
-              disabled={isYT || !schemaLoaded || !schemaFile || analyzing}
+              disabled={isYT || !schemaLoaded || !schemaFile || !startTimesFile || analyzing}
               title={isYT ? "YouTube sources are preview-only; analysis disabled" : !schemaLoaded ? "Load a schema to enable Analyze" : analyzing ? "Analyzing…" : "Analyze"}
             >
               {analyzing ? "Analyzing…" : "Analyze"}
@@ -820,7 +853,7 @@ export default function VideoPlayer({
       {/* Annotate Modal */}
       {isModalOpen && (
         <div className="modalOverlay" onMouseDown={(e) => { if (e.target.classList.contains("modalOverlay")) setModalOpen(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "grid", placeItems: "center", zIndex: 1000 }}>
-          <div className="modalCard modalCard--fit" role="dialog" aria-modal="true" aria-labelledby="annTitle" style={{ background:"var(--panel)", border:"1px solid var(--line)", borderRadius:12, padding:16, position:"relative" }}>
+          <div className="modalCard modalCard--fit" role="dialog" aria-modal="true" aria-labelledby="annTitle" style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, padding: 16, position: "relative" }}>
             <button onClick={() => setModalOpen(false)} title="Close" aria-label="Close" style={{ position: "absolute", top: 8, right: 8, background: "#4a2b2b", color: "#ffb3b3", border: "1px solid #5a3434", borderRadius: 8, width: 32, height: 32, display: "grid", placeItems: "center", cursor: "pointer" }}>
               <MdClose size={18} />
             </button>
