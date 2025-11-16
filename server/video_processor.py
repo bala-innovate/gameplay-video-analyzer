@@ -1,6 +1,8 @@
 import shutil
+import json
 from utils.file_handling import *
 from utils.frames_process import FrameHandler
+from utils.track_processed import TrackProcessedCSVswithTimestamps
 from team_learning_and_detection import TeamRepresentationLearning
 from probability_creation import SaveEventDataAndProbabilities
 
@@ -26,9 +28,12 @@ def print_line_to_fill_terminal(character='-'):
         print(character * 80) # Print a default length line
 
 
-
 def process_from_app(csv_name):
     print(csv_name)
+    processed = TrackProcessedCSVswithTimestamps(csv_name).processed
+    if processed:
+        return
+    
     move_annot_filepath = f'./data/Annotations/actions/{csv_name}'
     huddle_annot_filepath = f'./data/Annotations/start_times/start times {csv_name}'
     VIDEOS_DIR = './data/videos/'
