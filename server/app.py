@@ -49,22 +49,6 @@ def analyze():
 
         print(f"[StartTimes Saved] {start_times_path}")
 
-    # print("\n=== CSV RECEIVED ===")
-    # print(f"Filename: {filename}")
-    
-
-    # print(f"Received file: {filename}")
-
-    
-    # csv_bytes = csv_file.read()
-    # csv_text = csv_bytes.decode("utf-8", errors="replace")
-
-    # print("--- CSV Preview (first 10 lines) ---")
-    # lines = csv_text.splitlines()
-    # for line in lines[:10]:
-    #     print(line)
-    # print("=== END PREVIEW ===\n")
-
     process_from_app(schema_filename)
 
 
