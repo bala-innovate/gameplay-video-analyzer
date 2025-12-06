@@ -432,6 +432,93 @@ export default function VideoPlayer({
     onSchemaLoaded?.(file.name);
   };
 
+ // -------------------- FIXED START TIMES CSV PARSER ----------------------
+const handleStartTimesFile = async (file) => {
+  if (!file) return;
+
+  const text = await file.text();
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+
+  // Extract ONLY first CSV column (Google Sheets adds extra commas)
+  const cleaned = lines
+    .map((l) => l.split(",")[0].trim())  // <-- FIX
+    .filter(Boolean);
+
+  console.log("📥 Cleaned CSV:", cleaned);
+
+  // Find the "Timestamps" section
+  const idx = cleaned.findIndex(
+    (line) => line.toLowerCase() === "timestamps"
+  );
+
+  console.log("🔍 Timestamps found at index:", idx);
+
+  if (idx === -1) {
+    console.warn("⚠️ No 'Timestamps' header found in Start Times CSV");
+    return;
+  }
+
+  // Clear existing start times before loading new CSV
+  window.dispatchEvent(new CustomEvent("vp:clear-start-times"));
+
+  // Process each timestamp line
+  const timestampLines = cleaned.slice(idx + 1);
+
+  for (const line of timestampLines) {
+    if (!line) continue;
+
+    const sec = parseStartTimeFormat(line);
+
+    console.log("⏱ Parsed timestamp:", line, "→", sec);
+
+    if (sec == null || !isFinite(sec)) continue;
+
+    window.dispatchEvent(
+      new CustomEvent("vp:add-start-time", {
+        detail: { time: sec },
+      })
+    );
+  }
+
+  onStartTimesLoaded?.(file.name);
+};
+
+function parseStartTimeFormat(str) {
+  if (!str) return null;
+
+  const s = str.trim();
+
+  // Format: mm:ss OR m:ss
+  if (/^\d+:\d{1,2}$/.test(s)) {
+    const [mStr, sStr] = s.split(":");
+    return Number(mStr) * 60 + Number(sStr);
+  }
+
+  return null;
+}
+
+
+
+// Parse formats like "1:13", "2:07", "3:45"
+function parseStartTimeFormat(str) {
+  if (!str) return null;
+  const s = str.trim();
+
+  // mm:ss format
+  if (/^\d+:\d{1,2}$/.test(s)) {
+    const [mStr, sStr] = s.split(":");
+    const minutes = Number(mStr);
+    const seconds = Number(sStr);
+    if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
+    return minutes * 60 + seconds;
+  }
+
+
+  return null;
+}
+
+
+
   const onClickLoadSchema = () => schemaInputRef.current?.click();
   const onSchemaChange = (e) => {
     const f = e.target.files?.[0];
@@ -738,6 +825,17 @@ if (startTimesFile) {
                 {analyzeMsg}
               </span>
             )}
+            <button
+  className="src__btn"
+  type="button"
+  onClick={() => {
+    window.dispatchEvent(new CustomEvent("vp:add-start-time", { 
+      detail: { time: current } 
+    }));
+  }}
+>
+  Add Start Time
+</button>
 
             <input ref={schemaInputRef} type="file" accept=".csv,text/csv" hidden onChange={onSchemaChange} />
             <button className="src__btn" type="button" onClick={onClickLoadSchema} title="Load annotation schema CSV">
@@ -750,14 +848,14 @@ if (startTimesFile) {
               type="file"
               accept=".csv,text/csv"
               hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) {
-                  setStartTimesFile(f);
-                  onStartTimesLoaded?.(f.name);
-                }
-                e.target.value = "";
-              }}
+  onChange={async (e) => {
+  const f = e.target.files?.[0];
+  if (f) {
+    setStartTimesFile(f);
+    await handleStartTimesFile(f); 
+  }
+  e.target.value = "";
+}}
             />
 
             <button
@@ -778,6 +876,8 @@ if (startTimesFile) {
             >
               {analyzing ? "Analyzing…" : "Analyze"}
             </button>
+
+            
           </div>
         </div>
 
