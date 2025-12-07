@@ -46,6 +46,14 @@ export default function StartTimesTimeline({ hasSource }) {
     return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(ms).padStart(2, "0")}`;
   };
 
+  // Format for export: MM:SS (no decimals)
+const fmtExport = (s) => {
+  const whole = Math.floor(s); // drop decimals
+  const min = Math.floor(whole / 60);
+  const sec = whole % 60;
+  return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+};
+
   // Search/filter
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
@@ -96,7 +104,7 @@ export default function StartTimesTimeline({ hasSource }) {
 
   const toCSV = () => {
     let csv = "StartTime\n";
-    for (const r of rows) csv += `${r.clock}\n`;
+    for (const r of rows)  csv += `${fmtExport(r.raw)}\n`; 
     return csv;
   };
 
