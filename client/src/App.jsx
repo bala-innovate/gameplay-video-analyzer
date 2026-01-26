@@ -3,6 +3,7 @@ import Loader from "./components/Loader";
 import VideoPlayer from "./components/VideoPlayer";
 import AnnotationTimeline from "./components/AnnotationTimeline";
 import GraphsPanel from "./components/GraphsPanel";
+import StartTimesTimeline from "./components/StartTimesTimeline";
 
 export default function App() {
   const [source, setSource] = useState(null);   // { src, name, isURL }
@@ -75,6 +76,7 @@ export default function App() {
               <GraphsPanel results={analysisResults} onClear={() => setAnalysisResults(null)} />
             )} 
             <AnnotationTimeline hasSource={true} />
+            <StartTimesTimeline hasSource={true} />
            
 
             
