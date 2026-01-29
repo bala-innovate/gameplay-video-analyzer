@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import yt_dlp
+import shutil
 
 class CSVVideoInfoProcessor:
     def __init__(self, move_annot_filepath, huddle_annot_filepath, VIDEOS_DIR):
@@ -84,32 +85,29 @@ class CSVVideoInfoProcessor:
             self.video_name = self.video_url.split('/')[-1].split('?')[0]
         else:
             self.video_name = self.video_url.split('/')[-1]
+        
         self.video_path = f'{self.VIDEOS_DIR}/{self.video_name}.mp4'
         if os.path.exists(self.video_path):
             print(f"Video already exists at {self.video_path}. Skipping download.")
             return True
+        
+        node_abs = shutil.which('node')          # e.g. /usr/local/bin/node
+
         
         ydl_opts = {
             'outtmpl': os.path.join(self.VIDEOS_DIR, '%(id)s.%(ext)s'),
             'format': 'bestvideo+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
+            # 'verbose': True,           # extra debug
+            'cookiesfrombrowser': ('firefox',),
+            'js_runtimes': {'node': {'executable': node_abs}},
         }
-        # try:
-        #     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        #         info = ydl.extract_info(self.video_url, download=False)
-        #         video_path = ydl.prepare_filename(info)
-        #         if not video_path.endswith('.mp4'):
-        #             video_path = os.path.splitext(video_path)[0] + '.mp4'
-        #         if os.path.exists(video_path):
-        #             print(f"Video already exists at {video_path}. Skipping download.")
-        #             self.video_path = video_path
-        #             self.video_name = os.path.basename(video_path).split('.')[0]
-        #             return True
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.video_url, download=True)
+                # ydl.download([self.video_url])
                 video_path = ydl.prepare_filename(info)
             
                 if not video_path.endswith('.mp4'):
