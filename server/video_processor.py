@@ -2,6 +2,7 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 import shutil
+import subprocess
 # import json
 from utils.file_handling import *
 from utils.frames_process import FrameHandler
@@ -89,6 +90,18 @@ def find_snap_frame(cap, huddle_model, start_frame, fps):
     else:
         return last_high   # fallback
     
+# ----------  convert to browser-playable H.264 ----------
+def convert_to_h264(input_path, output_path):
+    """Re-encode an OpenCV mp4v video to H.264 so browsers can play it."""
+    subprocess.run([
+        'ffmpeg', '-y', '-i', input_path,
+        '-c:v', 'h264_videotoolbox', '-b:v', '5M',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        output_path
+    ], check=True, capture_output=True)
+    os.remove(input_path)
+
 # ---------------- helpers -----------------------
 def iou(b1, b2):
     xA, yA = max(b1[0], b2[0]), max(b1[1], b2[1])
@@ -130,8 +143,11 @@ def track_players(csv_name):
     # ----------------  video setup  -------------------------
     cap = cv2.VideoCapture(frame_handler.video_path)
     w, h, fps = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(cap.get(cv2.CAP_PROP_FPS))
-    # output_video_name = "nfl_blitz_updated_tags_tracked.mp4"
-    # out = cv2.VideoWriter(output_video_name, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+
+    os.makedirs('./results', exist_ok=True)
+    output_video_raw = './results/tracked_video_raw.mp4'
+    output_video_path = './results/tracked_video.mp4'
+    out = cv2.VideoWriter(output_video_raw, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
 
     # ----------------  main loop  ---------------------------
     moves_2_defenderCount_dict = {}
@@ -188,7 +204,24 @@ def track_players(csv_name):
 
             # 3) continue tracking with locked labels
             results = model.track(frame, imgsz=1280, conf=0.15, iou=0.5, persist=True, tracker=tracker, classes=[0], verbose=False)
-            
+
+            # Draw bounding boxes on a copy of the frame for video output
+            annotated = frame.copy()
+            if results[0].boxes.id is not None:
+                boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
+                ids   = results[0].boxes.id.cpu().numpy().astype(int)
+                for (x1, y1, x2, y2), tid in zip(boxes, ids):
+                    side = id_to_side.get(tid)
+                    if side is None:
+                        colour, label = (255, 255, 255), f"UNK {tid}"
+                    else:
+                        colour = (0, 255, 0) if side == "A" else (0, 0, 255)
+                        label  = f"{'ATT' if side == 'A' else 'DEF'} {tid}"
+                    cv2.rectangle(annotated, (x1, y1), (x2, y2), colour, 2)
+                    cv2.putText(annotated, label, (x1, y1 - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+            out.write(annotated)
+
             action_tags = [tag for tag, frm, _ in moves if frm == frame_idx]
             down_nums = [down for _, frm, down in moves if frm == frame_idx]
             if action_tags:
@@ -209,11 +242,13 @@ def track_players(csv_name):
             frame_idx += 1
 
     cap.release()
-    # out.release()
-    # heat_out.release()   # ### NEW ###  close heat-map writer
-    # print(f"saved → {output_video_name}")
-    # print(f"saved → {heat_video_name}")   # ### NEW ###
-    return moves_2_defenderCount_dict, moves_2_timeSincePlayBegan
+    out.release()
+
+    print("Converting tracked video to H.264 for browser playback...")
+    convert_to_h264(output_video_raw, output_video_path)
+    print(f"saved → {output_video_path}")
+
+    return moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, output_video_path
 
 # def temp_save_processed_frames(team_representations: TeamRepresentationLearning):
 #     for frame in team_representations.huddle_frames:
@@ -258,15 +293,13 @@ def process_from_app(csv_name):
     # print_line_to_fill_terminal()
     # print_line_to_fill_terminal()
     # print('Extracting relevant information from the video')
-    moves_2_defenderCount_dict, moves_2_timeSincePlayBegan = track_players(csv_name)
+    moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, tracked_video_path = track_players(csv_name)
     
     print_line_to_fill_terminal()
     def_count_event_csv_filepath = './results/move_vs_defenders_events.csv'
     def_count_prob_json_filepath = './results/move_policy_by_defenderCount_bin.json'
     time_since_play_event_csv_filepath = './results/move_vs_timeSinceDownFrameCount.csv'
     time_since_play_prob_json_filepath = './results/move_policy_by_frameCountSincePlayStart_bin.json'
-
-
 
     # Defender count: groupby_header = "num_defenders"
     SaveEventDataAndProbabilities(groupby_header="num_defenders",
@@ -279,6 +312,8 @@ def process_from_app(csv_name):
                                   events_dict=moves_2_timeSincePlayBegan,
                                   event_csv_filepath=time_since_play_event_csv_filepath,
                                   prob_json_filepath=time_since_play_prob_json_filepath)
+
+    return tracked_video_path
 
 # For Testing
 if __name__ == '__main__':

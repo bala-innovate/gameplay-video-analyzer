@@ -67,6 +67,11 @@ export default function VideoPlayer({
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeMsg, setAnalyzeMsg] = useState("");
 
+  // Tracked video state
+  const [trackedVideoUrl, setTrackedVideoUrl] = useState(null);
+  const [showTracked, setShowTracked] = useState(false);
+  const [trackedReady, setTrackedReady] = useState(false);
+  
   const hasSource = !!src;
 
   const TAG_OPTIONS = ["SPIN", "JUKE", "WALL_MOVE", "HURDLE", "TACKLE_BIG_HIT", "STIFF_ARM", "TACKLE_DIVE", "PASS_THROW", "PASS_CATCH", "TACKLE_WRAP"];
@@ -134,8 +139,16 @@ export default function VideoPlayer({
     player.on("play", () => setIsPlaying(true));
     player.on("pause", () => setIsPlaying(false));
 
-    player.src(isYouTube(src) ? { src, type: "video/youtube" } : { src, type: "video/mp4" });
-  }, [src, hasSource, onTimeUpdate]);
+    if (showTracked && trackedVideoUrl) {
+      if (player.readyState() >= 1) {
+        setTrackedReady(true);
+      } else {
+        player.one("loadedmetadata", () => setTrackedReady(true));
+      }
+    } else {
+      player.src(isYouTube(src) ? { src, type: "video/youtube" } : { src, type: "video/mp4" });
+    }
+  }, [src, hasSource, onTimeUpdate, showTracked]);
 
   // Dispose on unmount
   useEffect(
@@ -689,7 +702,7 @@ function parseStartTimeFormat(str) {
     if (isYT || !schemaLoaded || analyzing || !schemaFile) return;
     try {
       setAnalyzing(true);
-      setAnalyzeMsg("Contacting backend…");
+      setAnalyzeMsg("Processing video (this may take several minutes)");
 
       //     const res = await fetch(`${backendUrl}/analyze`, {
       //   method: "POST",
@@ -719,7 +732,24 @@ if (startTimesFile) {
       setAnalyzeMsg(data.message || "Done.");
       onAnalysisComplete?.(data);
 
+      if (data.tracked_video_url) {
+        const fullUrl = `${backendUrl}${data.tracked_video_url}`;
+        setTrackedVideoUrl(fullUrl);
+        setTrackedReady(false);   // not loaded yet
+        setShowTracked(true);     // flip the toggle immediately
 
+        // Switch the video.js player source
+        const p = playerRef.current;
+        if (p) {
+          p.src({ src: fullUrl, type: "video/mp4" });
+          p.one("loadedmetadata", () => setTrackedReady(true));
+          p.one("error", () => {
+            setAnalyzeMsg("Tracked video failed to load.");
+            setTrackedReady(false);
+            setShowTracked(false);
+          });
+        }
+      }
 
     } catch (err) {
       console.error(err);
@@ -769,6 +799,27 @@ if (startTimesFile) {
     // }
   };
 
+  const toggleTrackedVideo = () => {
+    const p = playerRef.current;
+    if (!p) return;
+
+    if (showTracked) {
+      // Switch back to original
+      p.src(isYT ? { src, type: "video/youtube" } : { src, type: "video/mp4" });
+      setShowTracked(false);
+    } else if (trackedVideoUrl) {
+      // Switch to tracked
+      setTrackedReady(false);
+      p.src({ src: trackedVideoUrl, type: "video/mp4" });
+      p.one("loadedmetadata", () => setTrackedReady(true));
+      p.one("error", () => {
+        setAnalyzeMsg("Tracked video failed to load.");
+        setTrackedReady(false);
+        setShowTracked(false);
+      });
+      setShowTracked(true);
+    }
+  };
   // =================== RENDER ===================
 
   if (!hasSource) return null;
@@ -776,8 +827,20 @@ if (startTimesFile) {
   return (
     <section className="vp">
       {/* Player */}
-      <div className="vp__videowrap">
+
+      <div className="vp__videowrap" style={{ position: "relative" }}>
         <video ref={videoElRef} className="video-js vjs-default-skin vp__videojs" playsInline />
+        {showTracked && !trackedReady && (
+          <div style={{
+            position: "absolute", inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            display: "grid", placeItems: "center",
+            color: "var(--muted)", fontSize: 14, zIndex: 5,
+            borderRadius: 10,
+          }}>
+            Loading tracked video…
+          </div>
+        )}
       </div>
 
       {/* Toolbar */}
@@ -876,6 +939,20 @@ if (startTimesFile) {
             >
               {analyzing ? "Analyzing…" : "Analyze"}
             </button>
+
+            {trackedVideoUrl && (
+              <button
+                className={`src__btn ${showTracked ? "src__btn--active" : ""}`}
+                type="button"
+                onClick={toggleTrackedVideo}
+                disabled={analyzing}
+                title={showTracked ? "Switch to original video" : "Switch to tracked video"}
+              >
+                {showTracked
+                  ? (trackedReady ? "Tracked" : "Loading Tracked…")
+                  : "Original"}
+              </button>
+            )}
 
             
           </div>

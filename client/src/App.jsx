@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import Loader from "./components/Loader";
 import VideoPlayer from "./components/VideoPlayer";
 import AnnotationTimeline from "./components/AnnotationTimeline";
@@ -10,6 +10,7 @@ export default function App() {
   const [schema, setSchema] = useState(null);   // { name }
   const [analysisResults, setAnalysisResults] = useState(null); // { [tagName]: number[] }
   const [startTimesName, setStartTimesName] = useState(null);
+  const handleTimeUpdate = useCallback(() => {}, []);
 
   const onLoad = ({ src, name, isURL }) => {
     setSource({ src, name, isURL });
@@ -64,7 +65,7 @@ export default function App() {
           
             <VideoPlayer
               src={source.src}
-              onTimeUpdate={() => {}}
+              onTimeUpdate={handleTimeUpdate}
               onSchemaLoaded={onSchemaLoaded}
               onAnalysisComplete={(data) => setAnalysisResults(data)}
               modelPath="/models/model.tflite"

@@ -100,7 +100,7 @@ class CSVVideoInfoProcessor:
             'merge_output_format': 'mp4',
             'quiet': True,
             # 'verbose': True,           # extra debug
-            'cookiesfrombrowser': ('firefox',),
+            'cookiesfrombrowser': ('chrome'),
             'js_runtimes': {'node': {'executable': node_abs}},
         }
 

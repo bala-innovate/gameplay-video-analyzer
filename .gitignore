@@ -1,1 +1,7 @@
 server/data/videos/
+.DS_Store
+__pycache__/
+*.pyc
+server/results/
+server/nfl_blitz_updated_tags_tracked.mp4
+node_modules/
