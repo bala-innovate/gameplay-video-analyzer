@@ -20,6 +20,8 @@ CORS(
 
 RESULTS_DIR = Path("results")
 CACHE_DIR = RESULTS_DIR / "cache"
+# Bump this when analysis/tracking output format changes so stale cache is ignored.
+CACHE_VERSION = "v3_overlay_boxes_plus_heatmap"
 
 RESULT_FILES = [
     "move_policy_by_defenderCount_bin.json",
@@ -27,12 +29,14 @@ RESULT_FILES = [
     "move_vs_defenders_events.csv",
     "move_vs_timeSinceDownFrameCount.csv",
     "tracked_video.mp4",
+    "heatmap_video.mp4",
 ]
 
 
 def _cache_key(schema_filename):
     stem = Path(schema_filename).stem
-    return re.sub(r'[^a-zA-Z0-9_-]', '_', stem)
+    safe_stem = re.sub(r'[^a-zA-Z0-9_-]', '_', stem)
+    return f"{CACHE_VERSION}_{safe_stem}"
 
 
 def _get_cache(schema_filename):
@@ -74,8 +78,6 @@ def analyze():
     print(f"[Schema Saved] {schema_path}")
     start_times_file = request.files.get("start_times")
     start_times_name = None
-    start_times_path = None
-
     if start_times_file and start_times_file.filename:
         start_times_name = start_times_file.filename
 
@@ -100,17 +102,19 @@ def analyze():
         cache_key = _cache_key(schema_filename)
         return jsonify({
             "ok": True,
+            "cache_hit": True,
             "filename": schema_filename,
             "start_times_name": start_times_name,
             "message": f"Loaded cached results for '{schema_filename}'",
             "probs_by_players": probs_players,
             "probs_by_time": probs_time,
             "tracked_video_url": f"/results/cache/{cache_key}/tracked_video.mp4",
+            "heatmap_video_url": f"/results/cache/{cache_key}/heatmap_video.mp4",
         })
 
     # --- No cache: run full analysis ---
     print(f"[Cache Miss] Running full analysis for '{schema_filename}'")
-    tracked_video_path = process_from_app(schema_filename)
+    process_from_app(schema_filename)
 
     path_players = RESULTS_DIR / "move_policy_by_defenderCount_bin.json"
     path_time = RESULTS_DIR / "move_policy_by_frameCountSincePlayStart_bin.json"
@@ -137,12 +141,14 @@ def analyze():
 
     return jsonify({
         "ok": True,
+        "cache_hit": False,
         "filename": schema_filename,
         "start_times_name": start_times_name,
         "message": f"Processed CSV '{schema_filename}'",
         "probs_by_players": probs_players,
         "probs_by_time": probs_time,
         "tracked_video_url": "/results/tracked_video.mp4",
+        "heatmap_video_url": "/results/heatmap_video.mp4",
     })
 
 

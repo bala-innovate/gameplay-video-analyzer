@@ -1,6 +1,4 @@
 GAME = 'NFL_Blitz'
 VIDEOS_DIR = f'./data/videos/{GAME}'
-FILES_PROCESSED_TRACKER_FILE_DIR = './data/processed_files.json'
 START_TIMES_ANNOT_FOLDER = f'./data/Annotations/start_times/{GAME}'
 MOVE_ANNOT_FOLDER = f'./data/Annotations/actions/{GAME}'
-MODELS_DIR = './models/'

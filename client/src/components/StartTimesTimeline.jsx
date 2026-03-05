@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { MdChevronLeft, MdChevronRight } from "react-icons/md";
 
-export default function StartTimesTimeline({ hasSource }) {
+export default function StartTimesTimeline({ hasSource, hideTitle = false }) {
   const [rows, setRows] = useState([]);
 
   useEffect(() => {
@@ -46,13 +46,8 @@ export default function StartTimesTimeline({ hasSource }) {
     return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(ms).padStart(2, "0")}`;
   };
 
-  // Format for export: MM:SS (no decimals)
-const fmtExport = (s) => {
-  const whole = Math.floor(s); // drop decimals
-  const min = Math.floor(whole / 60);
-  const sec = whole % 60;
-  return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-};
+  // Export in the same format shown in UI: mm:ss.hh
+  const fmtExport = (s) => fmtClock(s);
 
   // Search/filter
   const [query, setQuery] = useState("");
@@ -131,7 +126,7 @@ const fmtExport = (s) => {
 
   return (
     <section className="timeline">
-      <h2>Start Times</h2>
+      {!hideTitle && <h2>Start Times</h2>}
 
       {/* Filters row – matches annotation UI */}
       <div

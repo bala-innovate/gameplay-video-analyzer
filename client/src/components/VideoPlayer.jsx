@@ -4,18 +4,11 @@ import "video.js/dist/video-js.css";
 import "videojs-youtube";
 import { MdSkipPrevious, MdSkipNext, MdPlayArrow, MdPause, MdClose, MdArrowDropDown } from "react-icons/md";
 
-// Optional: TFJS can be removed if you don't use it elsewhere
-import * as tf from "@tensorflow/tfjs";
-
-// === MediaPipe Tasks (WASM) ===
-import { ObjectDetector, FilesetResolver } from "@mediapipe/tasks-vision";
-
 export default function VideoPlayer({
   src,
   onTimeUpdate,
   onSchemaLoaded,
   onAnalysisComplete,
-  modelPath = "/models/model.tflite",
   schemaLoaded = false,
   backendUrl = "http://127.0.0.1:5000",  //backendurl
   onStartTimesLoaded,
@@ -55,33 +48,96 @@ export default function VideoPlayer({
   // Editable current time
   const [timeEdit, setTimeEdit] = useState("00:00.00");
 
-  // Load Schema (CSV)
-  const schemaInputRef = useRef(null);
+  // Load analysis data (schema + start times)
+  const dataInputRef = useRef(null);
   const [schemaFile, setSchemaFile] = useState(null);
-
-  // Load Start Time(CSV)
-  const startTimesInputRef = useRef(null);
   const [startTimesFile, setStartTimesFile] = useState(null);
 
   // Analyze state
   const [analyzing, setAnalyzing] = useState(false);
-  const [analyzeMsg, setAnalyzeMsg] = useState("");
+  const [toasts, setToasts] = useState([]);
+  const analyzeInFlightRef = useRef(false);
+  const toastTimersRef = useRef(new Map());
 
   // Tracked video state
   const [trackedVideoUrl, setTrackedVideoUrl] = useState(null);
   const [showTracked, setShowTracked] = useState(false);
   const [trackedReady, setTrackedReady] = useState(false);
+
+  // Heatmap floating window state
+  const [heatmapVideoUrl, setHeatmapVideoUrl] = useState(null);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [heatmapPos, setHeatmapPos] = useState({ left: 12, top: 88 });
+  const heatmapVideoRef = useRef(null);
+  const heatmapWindowRef = useRef(null);
+  const heatmapDragRef = useRef(null);
   
   const hasSource = !!src;
 
   const TAG_OPTIONS = ["SPIN", "JUKE", "WALL_MOVE", "HURDLE", "TACKLE_BIG_HIT", "STIFF_ARM", "TACKLE_DIVE", "PASS_THROW", "PASS_CATCH", "TACKLE_WRAP"];
   const MODIFIER_OPTIONS = ["LEFT", "RIGHT", "IN_AIR", "FORWARD", "ON_GROUND", "ON_SIDELINE", "ON_WALL"];
 
+  const getDefaultHeatmapPos = (side = "right") => {
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 720;
+    const width = 360;
+    const height = 220;
+    const edge = 12;
+    const top = Math.max(edge, Math.min(88, vh - height - edge));
+    const left = side === "left" ? edge : Math.max(edge, vw - width - edge);
+    return { left, top };
+  };
+
+  const dismissToast = (id) => {
+    const t = toastTimersRef.current.get(id);
+    if (t) {
+      clearTimeout(t);
+      toastTimersRef.current.delete(id);
+    }
+    setToasts((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const pushToast = (message, variant = "info", durationMs = 3500) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts((prev) => [...prev, { id, message, variant }].slice(-4));
+    const timer = setTimeout(() => dismissToast(id), durationMs);
+    toastTimersRef.current.set(id, timer);
+  };
+
   // Receive annotation list from timeline
   useEffect(() => {
     const onState = (e) => setAnnSnapshot(Array.isArray(e.detail?.annotations) ? e.detail.annotations : []);
     window.addEventListener("at:state", onState);
     return () => window.removeEventListener("at:state", onState);
+  }, []);
+
+  useEffect(() => {
+    const onSeekToTime = (e) => {
+      const t = Number(e.detail?.time);
+      if (!Number.isFinite(t)) return;
+      const p = playerRef.current;
+      if (!p) return;
+
+      const maxT = Number.isFinite(duration) && duration > 0 ? duration : t;
+      const next = Math.max(0, Math.min(t, maxT));
+      p.currentTime(next);
+      setCurrent(next);
+      onTimeUpdate?.(next);
+    };
+
+    window.addEventListener("vp:seek-to-time", onSeekToTime);
+    return () => window.removeEventListener("vp:seek-to-time", onSeekToTime);
+  }, [duration, onTimeUpdate]);
+
+  useEffect(() => {
+    const onResetSchema = () => setSchemaFile(null);
+    const onResetStartTimes = () => setStartTimesFile(null);
+    window.addEventListener("vp:reset-schema", onResetSchema);
+    window.addEventListener("vp:reset-start-times", onResetStartTimes);
+    return () => {
+      window.removeEventListener("vp:reset-schema", onResetSchema);
+      window.removeEventListener("vp:reset-start-times", onResetStartTimes);
+    };
   }, []);
 
   const isYouTube = (url) => {
@@ -153,6 +209,8 @@ export default function VideoPlayer({
   // Dispose on unmount
   useEffect(
     () => () => {
+      toastTimersRef.current.forEach((t) => clearTimeout(t));
+      toastTimersRef.current.clear();
       if (playerRef.current) {
         try {
           playerRef.current.dispose();
@@ -232,6 +290,107 @@ export default function VideoPlayer({
 
   // Selection helpers
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+  useEffect(() => {
+    if (!showTracked && showHeatmap) setShowHeatmap(false);
+  }, [showTracked, showHeatmap]);
+
+  useEffect(() => {
+    if (!showHeatmap) return;
+    const hv = heatmapVideoRef.current;
+    if (!hv) return;
+    const t = Number(playerRef.current?.currentTime?.() ?? current);
+    if (Number.isFinite(t)) {
+      try {
+        hv.currentTime = Math.max(0, t);
+      } catch { }
+    }
+    if (isPlaying) {
+      hv.play().catch(() => { });
+    } else {
+      hv.pause();
+    }
+  }, [showHeatmap, isPlaying, current]);
+
+  useEffect(() => {
+    if (!showHeatmap) return;
+    const hv = heatmapVideoRef.current;
+    if (!hv) return;
+    if (!Number.isFinite(current)) return;
+    if (Math.abs((hv.currentTime || 0) - current) > 0.12) {
+      try {
+        hv.currentTime = Math.max(0, current);
+      } catch { }
+    }
+  }, [current, showHeatmap]);
+
+  useEffect(() => {
+    const onResize = () => {
+      setHeatmapPos((prev) => {
+        const el = heatmapWindowRef.current;
+        const rect = el?.getBoundingClientRect();
+        const width = rect?.width || 360;
+        const height = rect?.height || 220;
+        const edge = 12;
+        return {
+          left: clamp(prev.left, edge, Math.max(edge, window.innerWidth - width - edge)),
+          top: clamp(prev.top, edge, Math.max(edge, window.innerHeight - height - edge)),
+        };
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const snapHeatmapToEdge = () => {
+    const el = heatmapWindowRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const edge = 12;
+    const leftX = edge;
+    const rightX = Math.max(edge, window.innerWidth - rect.width - edge);
+    const centerX = rect.left + rect.width / 2;
+    const snapLeft = centerX < window.innerWidth / 2;
+    setHeatmapPos((prev) => ({
+      left: snapLeft ? leftX : rightX,
+      top: clamp(prev.top, edge, Math.max(edge, window.innerHeight - rect.height - edge)),
+    }));
+  };
+
+  const onHeatmapDragStart = (e) => {
+    if (e.button !== 0) return;
+    const el = heatmapWindowRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    heatmapDragRef.current = {
+      dx: e.clientX - rect.left,
+      dy: e.clientY - rect.top,
+    };
+
+    const onMove = (ev) => {
+      const drag = heatmapDragRef.current;
+      if (!drag) return;
+      const r = heatmapWindowRef.current?.getBoundingClientRect();
+      const width = r?.width || 360;
+      const height = r?.height || 220;
+      const edge = 12;
+      setHeatmapPos({
+        left: clamp(ev.clientX - drag.dx, edge, Math.max(edge, window.innerWidth - width - edge)),
+        top: clamp(ev.clientY - drag.dy, edge, Math.max(edge, window.innerHeight - height - edge)),
+      });
+    };
+
+    const onUp = () => {
+      heatmapDragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      snapHeatmapToEdge();
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   const clientXToTime = (clientX) => {
     const el = sliderWrapRef.current;
     if (!el || duration <= 0) return 0;
@@ -445,75 +604,37 @@ export default function VideoPlayer({
     onSchemaLoaded?.(file.name);
   };
 
- // -------------------- FIXED START TIMES CSV PARSER ----------------------
-const handleStartTimesFile = async (file) => {
-  if (!file) return;
+  // -------------------- START TIMES CSV PARSER ----------------------
+  const handleStartTimesFile = async (file) => {
+    if (!file) return;
 
-  const text = await file.text();
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const text = await file.text();
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
 
-  // Extract ONLY first CSV column (Google Sheets adds extra commas)
-  const cleaned = lines
-    .map((l) => l.split(",")[0].trim())  // <-- FIX
-    .filter(Boolean);
+    const cleaned = lines
+      .map((l) => l.split(",")[0].trim())
+      .filter(Boolean);
 
-  console.log("📥 Cleaned CSV:", cleaned);
+    const idx = cleaned.findIndex((line) => line.toLowerCase() === "timestamps");
+    if (idx === -1) {
+      console.warn("No 'Timestamps' header found in Start Times CSV");
+      return;
+    }
 
-  // Find the "Timestamps" section
-  const idx = cleaned.findIndex(
-    (line) => line.toLowerCase() === "timestamps"
-  );
+    window.dispatchEvent(new CustomEvent("vp:clear-start-times"));
 
-  console.log("🔍 Timestamps found at index:", idx);
+    const timestampLines = cleaned.slice(idx + 1);
+    for (const line of timestampLines) {
+      if (!line) continue;
+      const sec = parseStartTimeFormat(line);
+      if (sec == null || !isFinite(sec)) continue;
+      window.dispatchEvent(new CustomEvent("vp:add-start-time", { detail: { time: sec } }));
+    }
 
-  if (idx === -1) {
-    console.warn("⚠️ No 'Timestamps' header found in Start Times CSV");
-    return;
-  }
+    onStartTimesLoaded?.(file.name);
+  };
 
-  // Clear existing start times before loading new CSV
-  window.dispatchEvent(new CustomEvent("vp:clear-start-times"));
-
-  // Process each timestamp line
-  const timestampLines = cleaned.slice(idx + 1);
-
-  for (const line of timestampLines) {
-    if (!line) continue;
-
-    const sec = parseStartTimeFormat(line);
-
-    console.log("⏱ Parsed timestamp:", line, "→", sec);
-
-    if (sec == null || !isFinite(sec)) continue;
-
-    window.dispatchEvent(
-      new CustomEvent("vp:add-start-time", {
-        detail: { time: sec },
-      })
-    );
-  }
-
-  onStartTimesLoaded?.(file.name);
-};
-
-function parseStartTimeFormat(str) {
-  if (!str) return null;
-
-  const s = str.trim();
-
-  // Format: mm:ss OR m:ss
-  if (/^\d+:\d{1,2}$/.test(s)) {
-    const [mStr, sStr] = s.split(":");
-    return Number(mStr) * 60 + Number(sStr);
-  }
-
-  return null;
-}
-
-
-
-// Parse formats like "1:13", "2:07", "3:45"
-function parseStartTimeFormat(str) {
+  function parseStartTimeFormat(str) {
   if (!str) return null;
   const s = str.trim();
 
@@ -528,16 +649,53 @@ function parseStartTimeFormat(str) {
 
 
   return null;
-}
+  }
 
+  const classifyCsvFile = async (file) => {
+    const text = (await file.text()).toLowerCase();
+    const hasSchemaHeaders = text.includes("tagname") && text.includes("starttime") && text.includes("endtime");
+    const hasStartTimesHeader = text.includes("timestamps");
+    if (hasSchemaHeaders) return "schema";
+    if (hasStartTimesHeader) return "start_times";
+    return "unknown";
+  };
 
+  const onClickLoadData = () => dataInputRef.current?.click();
+  const onDataFilesChange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
 
-  const onClickLoadSchema = () => schemaInputRef.current?.click();
-  const onSchemaChange = (e) => {
-    const f = e.target.files?.[0];
-    if (f)
-      setSchemaFile(f);
-    handleSchemaFile(f);
+    let schemaCandidate = null;
+    let startTimesCandidate = null;
+
+    for (const f of files) {
+      const kind = await classifyCsvFile(f);
+      if (kind === "schema" && !schemaCandidate) schemaCandidate = f;
+      if (kind === "start_times" && !startTimesCandidate) startTimesCandidate = f;
+    }
+
+    if (schemaCandidate) {
+      setSchemaFile(schemaCandidate);
+      await handleSchemaFile(schemaCandidate);
+    }
+
+    if (startTimesCandidate) {
+      setStartTimesFile(startTimesCandidate);
+      await handleStartTimesFile(startTimesCandidate);
+    }
+
+    const nextHasSchema = !!(schemaCandidate || schemaFile);
+    const nextHasStartTimes = !!(startTimesCandidate || startTimesFile);
+
+    if (!schemaCandidate && !startTimesCandidate) {
+      pushToast("No valid CSV detected. Load a schema CSV or start times CSV.", "error");
+    } else if (nextHasSchema && nextHasStartTimes) {
+      pushToast("Data loaded. Ready to analyze.", "success");
+    } else if (nextHasSchema) {
+      pushToast("Schema loaded. Load start times CSV to continue.", "info");
+    } else if (nextHasStartTimes) {
+      pushToast("Start times loaded. Load schema CSV to continue.", "info");
+    }
     e.target.value = "";
   };
 
@@ -601,115 +759,13 @@ function parseStartTimeFormat(str) {
     setTimeEdit(formatTime(rounded));
   };
 
-  // =================== ANALYSIS WITH MEDIAPIPE TASKS ===================
-
-  const detectorRef = useRef(null);
-
-  const ensureDetector = async () => {
-    if (detectorRef.current) return detectorRef.current;
-
-    setAnalyzeMsg("Loading detector…");
-
-    // Resolve WASM assets (official CDN)
-    const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-
-    const detector = await ObjectDetector.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: modelPath,
-        delegate: "CPU",
-      },
-      scoreThreshold: 0.5,
-      maxResults: 25,
-      runningMode: "IMAGE",
-    });
-
-    detectorRef.current = detector;
-    return detector;
-  };
-
-  // Grab a frame at exact second and return a canvas (Tasks accepts HTMLCanvasElement)
-  const grabCanvasAt = (sec) =>
-    new Promise((resolve, reject) => {
-      const p = playerRef.current;
-      const videoEl = videoElRef.current;
-      if (!p || !videoEl) return reject(new Error("Player/video not ready"));
-      const onSeeked = () => {
-        try {
-          const vw = videoEl.videoWidth,
-            vh = videoEl.videoHeight;
-          if (!vw || !vh) throw new Error("No video dimension");
-          const canvas = document.createElement("canvas");
-          canvas.width = vw;
-          canvas.height = vh;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(videoEl, 0, 0, vw, vh);
-          resolve(canvas);
-        } catch (err) {
-          reject(err);
-        } finally {
-          videoEl.removeEventListener("seeked", onSeeked);
-        }
-      };
-      videoEl.addEventListener("seeked", onSeeked, { once: true });
-      p.currentTime(sec);
-    });
-
-  // Label mapping helpers
-  const FALLBACK_BY_INDEX = {
-    0: "BALL_CARRIER",
-    1: "DEFENDER",
-    2: "ATTACKER",
-  };
-  const BALL_CARRIER_LABELS = new Set(["BALL_CARRIER", "ball_carrier", "carrier"]);
-  const DEFENDER_LABELS = new Set(["DEFENDER", "defender"]);
-  const ATTACKER_LABELS = new Set(["ATTACKER", "attacker"]);
-
-  const labelOf = (det) => {
-    const c = det.categories?.[0];
-    const name = c?.categoryName;
-    if (name && name.trim()) return name.trim();
-    const idx = Number.isFinite(c?.index) ? c.index : undefined;
-    if (idx != null && FALLBACK_BY_INDEX[idx]) return FALLBACK_BY_INDEX[idx];
-    return "";
-  };
-
-  const countDefendersInFront = (detections) => {
-    const candidates = detections.map((det) => {
-      const label = labelOf(det);
-      const score = det.categories?.[0]?.score ?? 0;
-      const bb = det.boundingBox;
-      return { label, score, bb };
-    });
-
-    const carriers = candidates.filter((c) => BALL_CARRIER_LABELS.has(c.label));
-    const defenders = candidates.filter((c) => DEFENDER_LABELS.has(c.label));
-
-    if (carriers.length === 0) return 0;
-    let carrier = carriers[0];
-    for (const c of carriers) if (c.score > carrier.score) carrier = c;
-
-    const cy = carrier.bb.originY + carrier.bb.height / 2;
-    let count = 0;
-    for (const d of defenders) {
-      const dy = d.bb.originY + d.bb.height / 2;
-      if (dy < cy) count++;
-    }
-    return count;
-  };
-
   const runAnalysis = async () => {
-    if (isYT || !schemaLoaded || analyzing) return;
-    if (isYT || !schemaLoaded || analyzing || !schemaFile) return;
+    if (analyzeInFlightRef.current) return;
+    if (!schemaLoaded || analyzing || !schemaFile || !startTimesFile) return;
     try {
+      analyzeInFlightRef.current = true;
       setAnalyzing(true);
-      setAnalyzeMsg("Processing video (this may take several minutes)");
-
-      //     const res = await fetch(`${backendUrl}/analyze`, {
-      //   method: "POST",
-      //   // Send the exact CSV file as the body
-      //    headers: { "Content-Type": "text/csv" },
-      //   body: schemaFile,
-      //  });
+      pushToast("Processing video (this may take several minutes)", "info", 4500);
 
       const formData = new FormData();
 formData.append("file", schemaFile, schemaFile.name);
@@ -729,8 +785,15 @@ if (startTimesFile) {
       }
 
       const data = await res.json();
-      setAnalyzeMsg(data.message || "Done.");
+      pushToast(data.message || "Done.", "success");
       onAnalysisComplete?.(data);
+
+      if (data.heatmap_video_url) {
+        setHeatmapVideoUrl(`${backendUrl}${data.heatmap_video_url}`);
+      } else {
+        setHeatmapVideoUrl(null);
+        setShowHeatmap(false);
+      }
 
       if (data.tracked_video_url) {
         const fullUrl = `${backendUrl}${data.tracked_video_url}`;
@@ -744,7 +807,7 @@ if (startTimesFile) {
           p.src({ src: fullUrl, type: "video/mp4" });
           p.one("loadedmetadata", () => setTrackedReady(true));
           p.one("error", () => {
-            setAnalyzeMsg("Tracked video failed to load.");
+            pushToast("Tracked video failed to load.", "error");
             setTrackedReady(false);
             setShowTracked(false);
           });
@@ -753,50 +816,11 @@ if (startTimesFile) {
 
     } catch (err) {
       console.error(err);
-      setAnalyzeMsg("Analysis failed (see console).");
+      pushToast("Analysis failed (see console).", "error");
     } finally {
       setAnalyzing(false);
-      // setTimeout(() => setAnalyzeMsg(""), 1500); #uncomment if you want message to go away 
+      analyzeInFlightRef.current = false;
     }
-
-    // if (isYT || !schemaLoaded || analyzing) return;
-    // try {
-    //   setAnalyzing(true);
-    //   setAnalyzeMsg("Preparing…");
-
-    //   await tf.ready();
-    //   const detector = await ensureDetector();
-
-    //   const rows = annSnapshot.filter((a) => Number.isFinite(a.startKey));
-    //   if (rows.length === 0) {
-    //     setAnalyzeMsg("No annotated windows found.");
-    //     setAnalyzing(false);
-    //     return;
-    //   }
-
-    //   const results = {}; // { TAG: [counts...] }
-
-    //   for (let i = 0; i < rows.length; i++) {
-    //     const row = rows[i];
-    //     setAnalyzeMsg(`Analyzing ${i + 1}/${rows.length}…`);
-
-    //     const canvas = await grabCanvasAt(row.startKey);
-    //     const dets = await detector.detect(canvas);
-    //     const count = countDefendersInFront(dets.detections || []);
-
-    //     if (!results[row.tagName]) results[row.tagName] = [];
-    //     results[row.tagName].push(count);
-    //   }
-
-    //   setAnalyzeMsg("Done.");
-    //   onAnalysisComplete?.(results);
-    // } catch (err) {
-    //   console.error(err);
-    //   setAnalyzeMsg("Analysis failed (see console).");
-    // } finally {
-    //   setAnalyzing(false);
-    //   setTimeout(() => setAnalyzeMsg(""), 1500);
-    // }
   };
 
   const toggleTrackedVideo = () => {
@@ -813,12 +837,27 @@ if (startTimesFile) {
       p.src({ src: trackedVideoUrl, type: "video/mp4" });
       p.one("loadedmetadata", () => setTrackedReady(true));
       p.one("error", () => {
-        setAnalyzeMsg("Tracked video failed to load.");
+        pushToast("Tracked video failed to load.", "error");
         setTrackedReady(false);
         setShowTracked(false);
       });
       setShowTracked(true);
     }
+  };
+
+  const toggleHeatmapWindow = () => {
+    if (!heatmapVideoUrl) return;
+    if (!showTracked) {
+      pushToast("Switch to tracked video first to open heatmap.", "info");
+      return;
+    }
+    if (showHeatmap) {
+      setShowHeatmap(false);
+      return;
+    }
+    const nextSide = (heatmapPos.left + 180) < (window.innerWidth / 2) ? "left" : "right";
+    setHeatmapPos(getDefaultHeatmapPos(nextSide));
+    setShowHeatmap(true);
   };
   // =================== RENDER ===================
 
@@ -830,6 +869,18 @@ if (startTimesFile) {
 
       <div className="vp__videowrap" style={{ position: "relative" }}>
         <video ref={videoElRef} className="video-js vjs-default-skin vp__videojs" playsInline />
+        {!!toasts.length && (
+          <div className="vp__toasts" role="status" aria-live="polite">
+            {toasts.map((toast) => (
+              <div key={toast.id} className={`vp__toast vp__toast--${toast.variant}`}>
+                <span>{toast.message}</span>
+                <button type="button" className="vp__toastClose" onClick={() => dismissToast(toast.id)} aria-label="Dismiss notification">
+                  <MdClose size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {showTracked && !trackedReady && (
           <div style={{
             position: "absolute", inset: 0,
@@ -883,11 +934,6 @@ if (startTimesFile) {
           </div>
 
           <div style={{ justifySelf: "end", display: "flex", gap: 8, alignItems: "center" }}>
-            {analyzeMsg && (
-              <span className="mono" style={{ color: "var(--muted)", fontSize: 12 }}>
-                {analyzeMsg}
-              </span>
-            )}
             <button
   className="src__btn"
   type="button"
@@ -900,42 +946,24 @@ if (startTimesFile) {
   Add Start Time
 </button>
 
-            <input ref={schemaInputRef} type="file" accept=".csv,text/csv" hidden onChange={onSchemaChange} />
-            <button className="src__btn" type="button" onClick={onClickLoadSchema} title="Load annotation schema CSV">
-              Load Schema
-            </button>
-
-            {/* Hidden input for start_times */}
             <input
-              ref={startTimesInputRef}
+              ref={dataInputRef}
               type="file"
               accept=".csv,text/csv"
+              multiple
               hidden
-  onChange={async (e) => {
-  const f = e.target.files?.[0];
-  if (f) {
-    setStartTimesFile(f);
-    await handleStartTimesFile(f); 
-  }
-  e.target.value = "";
-}}
+              onChange={onDataFilesChange}
             />
-
-            <button
-              className="src__btn"
-              type="button"
-              onClick={() => startTimesInputRef.current?.click()}
-            >
-              Load Start Times
+            <button className="src__btn" type="button" onClick={onClickLoadData} title="Load schema and start times CSVs together">
+              Load Data
             </button>
 
             <button
               className="src__btn"
               type="button"
               onClick={runAnalysis}
-              // disabled={isYT || !schemaLoaded || analyzing}
-              disabled={isYT || !schemaLoaded || !schemaFile || !startTimesFile || analyzing}
-              title={isYT ? "YouTube sources are preview-only; analysis disabled" : !schemaLoaded ? "Load a schema to enable Analyze" : analyzing ? "Analyzing…" : "Analyze"}
+              disabled={!schemaLoaded || !schemaFile || !startTimesFile || analyzing}
+              title={!schemaFile || !startTimesFile ? "Load Data (schema + start times) first" : analyzing ? "Analyzing…" : "Analyze"}
             >
               {analyzing ? "Analyzing…" : "Analyze"}
             </button>
@@ -953,11 +981,19 @@ if (startTimesFile) {
                   : "Original"}
               </button>
             )}
-
-            
+            {heatmapVideoUrl && (
+              <button
+                className={`src__btn ${showHeatmap ? "src__btn--active" : ""}`}
+                type="button"
+                onClick={toggleHeatmapWindow}
+                disabled={analyzing}
+                title={!showTracked ? "Switch to tracked video first" : (showHeatmap ? "Close heatmap window" : "Open heatmap window")}
+              >
+                {showHeatmap ? "Close Heatmap" : "Heatmap"}
+              </button>
+            )}
           </div>
         </div>
-
         {/* Scrubber + overlay */}
         <div className="vp__slider">
           <div className="vp__scrubwrap" ref={sliderWrapRef}>
@@ -1026,6 +1062,43 @@ if (startTimesFile) {
           </details>
         </div>
       </div>
+
+      {showHeatmap && heatmapVideoUrl && (
+        <div
+          ref={heatmapWindowRef}
+          className="vp__heatmapWindow"
+          style={{ left: heatmapPos.left, top: heatmapPos.top }}
+        >
+          <div className="vp__heatmapHeader" onMouseDown={onHeatmapDragStart}>
+            <span>Player Heatmap</span>
+            <button
+              type="button"
+              className="vp__heatmapClose"
+              onClick={() => setShowHeatmap(false)}
+              aria-label="Close heatmap window"
+              title="Close"
+            >
+              <MdClose size={14} />
+            </button>
+          </div>
+          <video
+            ref={heatmapVideoRef}
+            className="vp__heatmapVideo"
+            src={heatmapVideoUrl}
+            muted
+            playsInline
+            preload="auto"
+            onLoadedMetadata={() => {
+              const hv = heatmapVideoRef.current;
+              if (!hv) return;
+              try {
+                hv.currentTime = Math.max(0, current);
+              } catch { }
+              if (isPlaying) hv.play().catch(() => { });
+            }}
+          />
+        </div>
+      )}
 
       {/* Annotate Modal */}
       {isModalOpen && (

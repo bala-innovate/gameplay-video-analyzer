@@ -1,13 +1,8 @@
-from ultralytics import YOLO
 import cv2
 from .yolo_detection import ImageDetectionHelpers
 
-import cv2
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict
 
 
 class HuddleFrameProcessor():
@@ -112,4 +107,3 @@ class HuddleFrameProcessor():
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return frame
-

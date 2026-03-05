@@ -3,7 +3,10 @@ from tqdm import tqdm
 from .csv_process import CSVVideoInfoProcessor
 from .yolo_detection import ImageDetectionHelpers
 from .huddle_frame_process import HuddleFrameProcessor
-from team_learning_and_detection import TeamRepresentationLearning
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from team_learning_and_detection import TeamRepresentationLearning
 
 class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
 
@@ -157,7 +160,7 @@ class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
 
     # Loading start_frame to action_frame dict: {start_frame_number: [(action_tag, action_frame), ...], ...}
     # Dict keys: start frames, Dict values: list of (action_tag, action_frame) in that play
-    def analyze_move_frames(self, team_representations: TeamRepresentationLearning):
+    def analyze_move_frames(self, team_representations: "TeamRepresentationLearning"):
             
         # Open video
         cap = cv2.VideoCapture(self.video_path)

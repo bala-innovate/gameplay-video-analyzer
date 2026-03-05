@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { MdChevronLeft, MdChevronRight } from "react-icons/md";
 
-export default function AnnotationTimeline({ currentTime = 0, hasSource }) {
+export default function AnnotationTimeline({ currentTime = 0, hasSource, hideTitle = false }) {
   const [annotations, setAnnotations] = useState([]);
 
   useEffect(() => { if (!hasSource) setAnnotations([]); }, [hasSource]);
@@ -26,12 +26,11 @@ export default function AnnotationTimeline({ currentTime = 0, hasSource }) {
     return `${String(min).padStart(2,"0")}:${String(sec).padStart(2,"0")}.${String(ms).padStart(2,"0")}`;
   };
 
-  const fmtMdotS = (s) => {
-    if (!isFinite(s)) return "0.00";
-    const total = Math.floor(s);
-    const m = Math.floor(total / 60);
-    const sec = total % 60;
-    return `${m}.${String(sec).padStart(2, "0")}`;
+  const seekVideoTo = (timeSec) => {
+    if (!Number.isFinite(timeSec)) return;
+    window.dispatchEvent(
+      new CustomEvent("vp:seek-to-time", { detail: { time: timeSec } })
+    );
   };
 
   const hasTagAtStart = (tagName, startKey) =>
@@ -135,8 +134,8 @@ export default function AnnotationTimeline({ currentTime = 0, hasSource }) {
   const exportJSON = (rows = annotations) => {
     const payload = rows.map(({ startKey, endKey, tagName, modifier, down }) => ({
       TagName: tagName ?? "",
-      StartTime: fmtMdotS(startKey),
-      EndTime: endKey != null ? fmtMdotS(endKey) : "",
+      StartTime: fmtClock(startKey),
+      EndTime: endKey != null ? fmtClock(endKey) : "",
       Modifiers: modifier ?? "",
       Down: down ?? "",
     }));
@@ -153,8 +152,8 @@ export default function AnnotationTimeline({ currentTime = 0, hasSource }) {
     for (const r of rows) {
       const rowOut = [
         esc(r.tagName ?? ""),
-        esc(fmtMdotS(r.startKey)),
-        esc(r.endKey != null ? fmtMdotS(r.endKey) : ""),
+        esc(fmtClock(r.startKey)),
+        esc(r.endKey != null ? fmtClock(r.endKey) : ""),
         esc(r.modifier ?? ""),
         esc(r.down ?? ""),
       ];
@@ -223,7 +222,7 @@ export default function AnnotationTimeline({ currentTime = 0, hasSource }) {
 
   return (
     <section className="timeline">
-      <h2>Timeline: Action Annotations</h2>
+      {!hideTitle && <h2>Timeline: Action Annotations</h2>}
 
       {/* Filters */}
       <div className="timeline__filters" style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 220px auto", marginBottom:12 }}>
@@ -283,8 +282,44 @@ export default function AnnotationTimeline({ currentTime = 0, hasSource }) {
                       aria-label={`Select ${ann.tagName || "Custom Tag"} at ${ann.startTime}`}
                     />
                   </td>
-                  <td>{ann.startTime}</td>
-                  <td>{ann.endTime}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="mono"
+                      onClick={() => seekVideoTo(ann.startKey)}
+                      title={`Jump to ${ann.startTime}`}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "var(--accent)",
+                        cursor: "pointer",
+                        padding: 0,
+                      }}
+                    >
+                      {ann.startTime}
+                    </button>
+                  </td>
+                  <td>
+                    {Number.isFinite(ann.endKey) ? (
+                      <button
+                        type="button"
+                        className="mono"
+                        onClick={() => seekVideoTo(ann.endKey)}
+                        title={`Jump to ${ann.endTime}`}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "var(--accent)",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {ann.endTime}
+                      </button>
+                    ) : (
+                      ann.endTime
+                    )}
+                  </td>
                   <td>
                     <input
                       type="text"

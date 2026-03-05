@@ -177,7 +177,7 @@ function ProbLineChart({
   );
 }
 
-export default function GraphsPanel({ results, onClear }) {
+export default function GraphsPanel({ results, onClear, hideTitle = false }) {
   const playersObj =
     results?.probs_by_players ??
     results?.probsPlayers ??
@@ -192,7 +192,7 @@ export default function GraphsPanel({ results, onClear }) {
     return (
       <section className="gp">
         <div className="gp__header">
-          <h3>Analysis</h3>
+          {!hideTitle && <h3>Analysis</h3>}
           {onClear && (
             <button className="gp__clear" onClick={onClear}>
               Clear
@@ -207,7 +207,7 @@ export default function GraphsPanel({ results, onClear }) {
   return (
     <section className="gp">
       <div className="gp__header">
-        <h3>Analysis</h3>
+        {!hideTitle && <h3>Analysis</h3>}
         {onClear && (
           <button className="gp__clear" onClick={onClear}>
             Clear

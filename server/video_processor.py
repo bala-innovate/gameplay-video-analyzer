@@ -3,30 +3,14 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 import shutil
 import subprocess
-# import json
-from utils.file_handling import *
 from utils.frames_process import FrameHandler
-# from utils.track_processed import TrackProcessedCSVswithTimestamps
 from utils.probability_creation import SaveEventDataAndProbabilities
 
-from utils.file_handling import *
 import cv2
-# import numpy as np
 from tqdm import tqdm
 from config import *
 from ultralytics import YOLO
-# import matplotlib.pyplot as plt
-
-# import torch
-# from torchvision.models.resnet import resnet50, ResNet50_Weights # 18, 34 other options
-# # from torchvision.models import densenet121, DenseNet121_Weights
-# device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-# resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
-# resnet.fc = torch.nn.Identity() # Setting the fully connected (fc) layer to identity
-# # densenet = densenet121(weights=DenseNet121_Weights.DEFAULT)
-# # densenet.classifier = torch.nn.Identity()
-# model = resnet
-# model.to(device)
+import numpy as np
 
 # ----------  NEW:  find snap frame inside 1-second window ----------
 def find_snap_frame(cap, huddle_model, start_frame, fps):
@@ -111,22 +95,33 @@ def iou(b1, b2):
     area2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
     return inter / (area1 + area2 - inter + 1e-6)
 
-# --------------- player crop encoding ---------------
 
-# def cnn_feature_extraction(img):
-#     torch.cuda.empty_cache()        
-#     # Prepare the image for inference
-#     # img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV_FULL)
-#     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+def _assign_role_bands(id_to_side, id_to_initial_y):
+    """
+    Approximate position-groups (e.g., line/back/deep) per side by vertical bands
+    from the first reliable labeled frame. Returns track_id -> band index.
+    """
+    side_to_ids = {"A": [], "D": []}
+    for tid, side in id_to_side.items():
+        if tid in id_to_initial_y:
+            side_to_ids.setdefault(side, []).append(tid)
 
-#     img = cv2.resize(img, dsize=(224,224), interpolation=cv2.INTER_NEAREST_EXACT)
-#     img = np.expand_dims(np.moveaxis(img, -1, 0), 0)
-#     img = torch.Tensor(img).to(device)
-#     # Extract features
-#     with torch.no_grad():
-#         feats = model(img)
-#     return feats.cpu()
-
+    id_to_band = {}
+    for side, ids in side_to_ids.items():
+        if not ids:
+            continue
+        ys = np.array([id_to_initial_y[i] for i in ids], dtype=float)
+        q1 = float(np.quantile(ys, 0.33))
+        q2 = float(np.quantile(ys, 0.66))
+        for tid in ids:
+            y = float(id_to_initial_y[tid])
+            if y <= q1:
+                id_to_band[tid] = 0
+            elif y <= q2:
+                id_to_band[tid] = 1
+            else:
+                id_to_band[tid] = 2
+    return id_to_band
 
 def track_players(csv_name):
     # ----------------  models  ------------------------------
@@ -147,7 +142,10 @@ def track_players(csv_name):
     os.makedirs('./results', exist_ok=True)
     output_video_raw = './results/tracked_video_raw.mp4'
     output_video_path = './results/tracked_video.mp4'
+    heatmap_video_raw = './results/heatmap_video_raw.mp4'
+    heatmap_video_path = './results/heatmap_video.mp4'
     out = cv2.VideoWriter(output_video_raw, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    out_heatmap = cv2.VideoWriter(heatmap_video_raw, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
 
     # ----------------  main loop  ---------------------------
     moves_2_defenderCount_dict = {}
@@ -160,12 +158,10 @@ def track_players(csv_name):
 
         # 1) find exact snap frame inside 1-second window
         last_huddle_frame = find_snap_frame(cap, huddle_detection, start_time_frame, fps)
-        first_frame = start_time_frame
         last_frame  = moves[-1][1]
         id_to_side = {}        # track_id -> "A" / "D"
-
-        # if show_trail_in_heatmap:
-        #     heat_map = np.zeros((h, w, 3), dtype=np.uint8)  # black at start of each play
+        id_to_initial_y = {}   # track_id -> initial center y
+        id_to_role_band = {}   # track_id -> band index (0/1/2)
 
         fine_window = int(fps // 2)
 
@@ -201,17 +197,23 @@ def track_players(csv_name):
                                 best_iou, best_side = iou_val, side
                         if best_iou > 0.3:
                             id_to_side[tid] = best_side
+                            id_to_initial_y[tid] = float((tb[1] + tb[3]) / 2.0)
+                id_to_role_band = _assign_role_bands(id_to_side, id_to_initial_y)
 
             # 3) continue tracking with locked labels
             results = model.track(frame, imgsz=1280, conf=0.15, iou=0.5, persist=True, tracker=tracker, classes=[0], verbose=False)
 
             # Draw bounding boxes on a copy of the frame for video output
             annotated = frame.copy()
+            heatmap_frame = np.zeros((h, w, 3), dtype=np.uint8)
             if results[0].boxes.id is not None:
                 boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
                 ids   = results[0].boxes.id.cpu().numpy().astype(int)
+                grouped_points = {}
                 for (x1, y1, x2, y2), tid in zip(boxes, ids):
                     side = id_to_side.get(tid)
+                    cx = int((x1 + x2) / 2)
+                    cy = int((y1 + y2) / 2)
                     if side is None:
                         colour, label = (255, 255, 255), f"UNK {tid}"
                     else:
@@ -220,20 +222,31 @@ def track_players(csv_name):
                     cv2.rectangle(annotated, (x1, y1), (x2, y2), colour, 2)
                     cv2.putText(annotated, label, (x1, y1 - 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+                    if side is not None:
+                        cv2.circle(heatmap_frame, (cx, cy), 4, colour, -1)
+                        band = id_to_role_band.get(tid, -1)
+                        key = (side, band)
+                        grouped_points.setdefault(key, []).append((cx, cy))
+
+                # Connect players of similar estimated position groups
+                for (side, _band), pts in grouped_points.items():
+                    if len(pts) < 2:
+                        continue
+                    pts_sorted = sorted(pts, key=lambda p: p[0])
+                    poly = np.array(pts_sorted, dtype=np.int32).reshape((-1, 1, 2))
+                    line_colour = (0, 180, 0) if side == "A" else (0, 0, 180)
+                    cv2.polylines(heatmap_frame, [poly], isClosed=False, color=line_colour, thickness=2)
             out.write(annotated)
+            out_heatmap.write(heatmap_frame)
 
             action_tags = [tag for tag, frm, _ in moves if frm == frame_idx]
             down_nums = [down for _, frm, down in moves if frm == frame_idx]
             if action_tags:
                 if results[0].boxes.id is not None:
-                    # boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
-                    # ids   = results[0].boxes.id.cpu().numpy().astype(int)
                     defenders_count = list(id_to_side.values()).count('D')
                     for tag, down in zip(action_tags, down_nums):
                         # Save move to defender count in a dictionary
                         moves_2_defenderCount_dict[frame_idx] = (tag, defenders_count)    
-                        # Time in seconds (whole numbers) 
-                        # moves_2_timeSincePlayBegan[move_frame_number] = (action_tag, round((move_frame_number - start_time_frame)/fps, 3), down_number)
                         # Time in frames (multiples of 60)
                         moves_2_timeSincePlayBegan[frame_idx] = (tag, frame_idx - start_time_frame, down)     
 
@@ -243,15 +256,16 @@ def track_players(csv_name):
 
     cap.release()
     out.release()
+    out_heatmap.release()
 
     print("Converting tracked video to H.264 for browser playback...")
     convert_to_h264(output_video_raw, output_video_path)
+    print("Converting heatmap video to H.264 for browser playback...")
+    convert_to_h264(heatmap_video_raw, heatmap_video_path)
     print(f"saved → {output_video_path}")
+    print(f"saved → {heatmap_video_path}")
 
-    return moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, output_video_path
-
-# def temp_save_processed_frames(team_representations: TeamRepresentationLearning):
-#     for frame in team_representations.huddle_frames:
+    return moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, output_video_path, heatmap_video_path
 
 def print_line_to_fill_terminal(character='-'):
     """
@@ -275,25 +289,7 @@ def print_line_to_fill_terminal(character='-'):
 
 def process_from_app(csv_name):
     print(csv_name)
-    # processed = TrackProcessedCSVswithTimestamps(csv_name).processed
-    # if processed:
-    #     return
-    
-    # move_annot_filepath = f'./data/Annotations/actions/{csv_name}'
-    # huddle_annot_filepath = f'./data/Annotations/start_times/start times {csv_name}'
-    # VIDEOS_DIR = './data/videos/'
-    # # yolo_model_path = './models/yolo11m.pt'
-    # yolo_model_path = './models/yolo26m.pt'
-    
-    # print_line_to_fill_terminal()
-    # frame_handler = FrameHandler(move_annot_filepath, huddle_annot_filepath, VIDEOS_DIR, yolo_model_path)
-    # if not frame_handler.video_exists_on_yt:
-    #     return 
-    
-    # print_line_to_fill_terminal()
-    # print_line_to_fill_terminal()
-    # print('Extracting relevant information from the video')
-    moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, tracked_video_path = track_players(csv_name)
+    moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, tracked_video_path, heatmap_video_path = track_players(csv_name)
     
     print_line_to_fill_terminal()
     def_count_event_csv_filepath = './results/move_vs_defenders_events.csv'
@@ -313,7 +309,7 @@ def process_from_app(csv_name):
                                   event_csv_filepath=time_since_play_event_csv_filepath,
                                   prob_json_filepath=time_since_play_prob_json_filepath)
 
-    return tracked_video_path
+    return tracked_video_path, heatmap_video_path
 
 # For Testing
 if __name__ == '__main__':

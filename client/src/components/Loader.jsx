@@ -4,10 +4,6 @@ export default function Loader({ onLoad }) {
   const [tab, setTab] = useState("file");
   const [urlInput, setUrlInput] = useState("");
 
-  const isYouTube = (url) => {
-    try { const u = new URL(url); return ["www.youtube.com","youtube.com","youtu.be"].includes(u.hostname); } catch { return false; }
-  };
-
   const onFileChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -65,7 +61,7 @@ export default function Loader({ onLoad }) {
             />
             <button className="src__btn" onClick={loadFromUrl} disabled={!urlInput.trim()}>Load</button>
           </div>
-          <div className="src__hint">YouTube videos can be previewed but not analyzed due to browser restrictions.</div>
+          <div className="src__hint">YouTube sources can be analyzed on the server after loading schema/start-times data.</div>
         </div>
       )}
     </section>
