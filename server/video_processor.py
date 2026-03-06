@@ -3,6 +3,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 import shutil
 import subprocess
+import json
 from utils.frames_process import FrameHandler
 from utils.probability_creation import SaveEventDataAndProbabilities
 
@@ -150,6 +151,8 @@ def track_players(csv_name):
     # ----------------  main loop  ---------------------------
     moves_2_defenderCount_dict = {}
     moves_2_timeSincePlayBegan = {}
+    tracked_timeline_segments = []
+    output_frame_idx = 0
 
     # Loading start_frame to action_frame dict: {start_frame_number: [(action_tag, action_frame_num, down_number), ...], ...}
     for start_time_frame, moves in tqdm(frame_handler.huddle_to_moves_map.items()):
@@ -159,6 +162,9 @@ def track_players(csv_name):
         # 1) find exact snap frame inside 1-second window
         last_huddle_frame = find_snap_frame(cap, huddle_detection, start_time_frame, fps)
         last_frame  = moves[-1][1]
+        play_source_start = None
+        play_source_end = None
+        play_output_start = output_frame_idx
         id_to_side = {}        # track_id -> "A" / "D"
         id_to_initial_y = {}   # track_id -> initial center y
         id_to_role_band = {}   # track_id -> band index (0/1/2)
@@ -175,10 +181,10 @@ def track_players(csv_name):
 
             # 2) label on snap frame
             if frame_idx == last_huddle_frame:
-                results = model.track(frame, imgsz=1280, conf=0.15, iou=0.5, persist=False, tracker=tracker, classes=[0], verbose=False)
-                if results[0].boxes.id is not None:
-                    trk_boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
-                    trk_ids   = results[0].boxes.id.cpu().numpy().astype(int)
+                snap_results = model.track(frame, imgsz=1280, conf=0.15, iou=0.5, persist=False, tracker=tracker, classes=[0], verbose=False)
+                if snap_results[0].boxes.id is not None:
+                    trk_boxes = snap_results[0].boxes.xyxy.cpu().numpy().astype(int)
+                    trk_ids   = snap_results[0].boxes.id.cpu().numpy().astype(int)
 
                     hdl_res = huddle_detection(frame, verbose=False)[0]
                     hdl_boxes = []
@@ -187,7 +193,7 @@ def track_players(csv_name):
                         cls  = int(b.cls[0])          # 0 = attacker, 1 = defender
                         side = "A" if cls == 0 else "D"
                         hdl_boxes.append((xyxy, side))
-                    
+
                     # match huddle boxes to track IDs via IOU
                     for (tb, tid) in zip(trk_boxes, trk_ids):
                         best_iou, best_side = 0, None
@@ -209,7 +215,7 @@ def track_players(csv_name):
             if results[0].boxes.id is not None:
                 boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
                 ids   = results[0].boxes.id.cpu().numpy().astype(int)
-                grouped_points = {}
+                side_points = {"A": [], "D": []}
                 for (x1, y1, x2, y2), tid in zip(boxes, ids):
                     side = id_to_side.get(tid)
                     cx = int((x1 + x2) / 2)
@@ -223,21 +229,24 @@ def track_players(csv_name):
                     cv2.putText(annotated, label, (x1, y1 - 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
                     if side is not None:
-                        cv2.circle(heatmap_frame, (cx, cy), 4, colour, -1)
-                        band = id_to_role_band.get(tid, -1)
-                        key = (side, band)
-                        grouped_points.setdefault(key, []).append((cx, cy))
+                        # Bigger solid markers for better visibility.
+                        cv2.circle(heatmap_frame, (cx, cy), 7, colour, -1)
+                        side_points[side].append((cx, cy))
 
-                # Connect players of similar estimated position groups
-                for (side, _band), pts in grouped_points.items():
+                # Connect all players of the same side to each other (complete graph).
+                for side, pts in side_points.items():
                     if len(pts) < 2:
                         continue
-                    pts_sorted = sorted(pts, key=lambda p: p[0])
-                    poly = np.array(pts_sorted, dtype=np.int32).reshape((-1, 1, 2))
-                    line_colour = (0, 180, 0) if side == "A" else (0, 0, 180)
-                    cv2.polylines(heatmap_frame, [poly], isClosed=False, color=line_colour, thickness=2)
+                    line_colour = (0, 255, 0) if side == "A" else (0, 0, 255)
+                    for i in range(len(pts)):
+                        for j in range(i + 1, len(pts)):
+                            cv2.line(heatmap_frame, pts[i], pts[j], line_colour, 4, lineType=cv2.LINE_AA)
             out.write(annotated)
             out_heatmap.write(heatmap_frame)
+            if play_source_start is None:
+                play_source_start = frame_idx
+            play_source_end = frame_idx
+            output_frame_idx += 1
 
             action_tags = [tag for tag, frm, _ in moves if frm == frame_idx]
             down_nums = [down for _, frm, down in moves if frm == frame_idx]
@@ -254,9 +263,24 @@ def track_players(csv_name):
                 break
             frame_idx += 1
 
+        if play_source_start is not None and play_source_end is not None and output_frame_idx > play_output_start:
+            tracked_timeline_segments.append({
+                "source_start_frame": int(play_source_start),
+                "source_end_frame": int(play_source_end),
+                "tracked_start_frame": int(play_output_start),
+                "tracked_end_frame": int(output_frame_idx - 1),
+            })
+
     cap.release()
     out.release()
     out_heatmap.release()
+
+    tracked_timeline_map_path = "./results/tracked_timeline_map.json"
+    with open(tracked_timeline_map_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "fps": int(fps),
+            "segments": tracked_timeline_segments,
+        }, f, indent=2)
 
     print("Converting tracked video to H.264 for browser playback...")
     convert_to_h264(output_video_raw, output_video_path)
@@ -265,7 +289,7 @@ def track_players(csv_name):
     print(f"saved → {output_video_path}")
     print(f"saved → {heatmap_video_path}")
 
-    return moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, output_video_path, heatmap_video_path
+    return moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, output_video_path, heatmap_video_path, tracked_timeline_map_path
 
 def print_line_to_fill_terminal(character='-'):
     """
@@ -289,7 +313,7 @@ def print_line_to_fill_terminal(character='-'):
 
 def process_from_app(csv_name):
     print(csv_name)
-    moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, tracked_video_path, heatmap_video_path = track_players(csv_name)
+    moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, tracked_video_path, heatmap_video_path, tracked_timeline_map_path = track_players(csv_name)
     
     print_line_to_fill_terminal()
     def_count_event_csv_filepath = './results/move_vs_defenders_events.csv'
@@ -309,7 +333,7 @@ def process_from_app(csv_name):
                                   event_csv_filepath=time_since_play_event_csv_filepath,
                                   prob_json_filepath=time_since_play_prob_json_filepath)
 
-    return tracked_video_path, heatmap_video_path
+    return tracked_video_path, heatmap_video_path, tracked_timeline_map_path
 
 # For Testing
 if __name__ == '__main__':

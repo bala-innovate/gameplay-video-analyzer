@@ -21,7 +21,7 @@ CORS(
 RESULTS_DIR = Path("results")
 CACHE_DIR = RESULTS_DIR / "cache"
 # Bump this when analysis/tracking output format changes so stale cache is ignored.
-CACHE_VERSION = "v3_overlay_boxes_plus_heatmap"
+CACHE_VERSION = "v5_restore_original_tracking"
 
 RESULT_FILES = [
     "move_policy_by_defenderCount_bin.json",
@@ -30,6 +30,7 @@ RESULT_FILES = [
     "move_vs_timeSinceDownFrameCount.csv",
     "tracked_video.mp4",
     "heatmap_video.mp4",
+    "tracked_timeline_map.json",
 ]
 
 
@@ -98,6 +99,8 @@ def analyze():
             probs_players = json.load(f)
         with (cached / "move_policy_by_frameCountSincePlayStart_bin.json").open() as f:
             probs_time = json.load(f)
+        with (cached / "tracked_timeline_map.json").open() as f:
+            tracked_timeline_map = json.load(f)
 
         cache_key = _cache_key(schema_filename)
         return jsonify({
@@ -110,6 +113,7 @@ def analyze():
             "probs_by_time": probs_time,
             "tracked_video_url": f"/results/cache/{cache_key}/tracked_video.mp4",
             "heatmap_video_url": f"/results/cache/{cache_key}/heatmap_video.mp4",
+            "tracked_timeline_map": tracked_timeline_map,
         })
 
     # --- No cache: run full analysis ---
@@ -136,6 +140,8 @@ def analyze():
 
     with path_time.open("r", encoding="utf-8") as f:
         probs_time = json.load(f)
+    with (RESULTS_DIR / "tracked_timeline_map.json").open("r", encoding="utf-8") as f:
+        tracked_timeline_map = json.load(f)
 
     _save_cache(schema_filename)
 
@@ -149,6 +155,7 @@ def analyze():
         "probs_by_time": probs_time,
         "tracked_video_url": "/results/tracked_video.mp4",
         "heatmap_video_url": "/results/heatmap_video.mp4",
+        "tracked_timeline_map": tracked_timeline_map,
     })
 
 

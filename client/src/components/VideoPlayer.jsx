@@ -13,6 +13,7 @@ export default function VideoPlayer({
   backendUrl = "http://127.0.0.1:5000",  //backendurl
   onStartTimesLoaded,
 }) {
+  const playerSectionRef = useRef(null);
   const videoElRef = useRef(null);
   const playerRef = useRef(null);
 
@@ -63,14 +64,17 @@ export default function VideoPlayer({
   const [trackedVideoUrl, setTrackedVideoUrl] = useState(null);
   const [showTracked, setShowTracked] = useState(false);
   const [trackedReady, setTrackedReady] = useState(false);
+  const [trackedTimelineMap, setTrackedTimelineMap] = useState(null);
 
   // Heatmap floating window state
   const [heatmapVideoUrl, setHeatmapVideoUrl] = useState(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [heatmapPos, setHeatmapPos] = useState({ left: 12, top: 88 });
+  const [heatmapSize, setHeatmapSize] = useState({ width: 420, height: 260 });
   const heatmapVideoRef = useRef(null);
   const heatmapWindowRef = useRef(null);
   const heatmapDragRef = useRef(null);
+  const heatmapResizeRef = useRef(null);
   
   const hasSource = !!src;
 
@@ -80,8 +84,8 @@ export default function VideoPlayer({
   const getDefaultHeatmapPos = (side = "right") => {
     const vw = window.innerWidth || 1280;
     const vh = window.innerHeight || 720;
-    const width = 360;
-    const height = 220;
+    const width = heatmapSize.width;
+    const height = heatmapSize.height;
     const edge = 12;
     const top = Math.max(edge, Math.min(88, vh - height - edge));
     const left = side === "left" ? edge : Math.max(edge, vw - width - edge);
@@ -95,6 +99,41 @@ export default function VideoPlayer({
       toastTimersRef.current.delete(id);
     }
     setToasts((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const mapSourceTimeToTrackedTime = (sourceTimeSec) => {
+    const fps = Number(trackedTimelineMap?.fps);
+    const segments = Array.isArray(trackedTimelineMap?.segments) ? trackedTimelineMap.segments : [];
+    if (!Number.isFinite(sourceTimeSec) || !Number.isFinite(fps) || fps <= 0 || segments.length === 0) {
+      return sourceTimeSec;
+    }
+
+    const sourceFrame = Math.round(sourceTimeSec * fps);
+    let best = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+
+    for (const seg of segments) {
+      const s0 = Number(seg.source_start_frame);
+      const s1 = Number(seg.source_end_frame);
+      const t0 = Number(seg.tracked_start_frame);
+      const t1 = Number(seg.tracked_end_frame);
+      if (![s0, s1, t0, t1].every(Number.isFinite)) continue;
+
+      if (sourceFrame >= s0 && sourceFrame <= s1) {
+        const trackedFrame = t0 + (sourceFrame - s0);
+        return trackedFrame / fps;
+      }
+
+      const dist = sourceFrame < s0 ? (s0 - sourceFrame) : (sourceFrame - s1);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = { s0, s1, t0, t1 };
+      }
+    }
+
+    if (!best) return sourceTimeSec;
+    const boundaryTrackedFrame = sourceFrame < best.s0 ? best.t0 : best.t1;
+    return boundaryTrackedFrame / fps;
   };
 
   const pushToast = (message, variant = "info", durationMs = 3500) => {
@@ -113,21 +152,23 @@ export default function VideoPlayer({
 
   useEffect(() => {
     const onSeekToTime = (e) => {
-      const t = Number(e.detail?.time);
-      if (!Number.isFinite(t)) return;
+      const sourceTime = Number(e.detail?.time);
+      if (!Number.isFinite(sourceTime)) return;
       const p = playerRef.current;
       if (!p) return;
+      const t = showTracked ? mapSourceTimeToTrackedTime(sourceTime) : sourceTime;
 
       const maxT = Number.isFinite(duration) && duration > 0 ? duration : t;
       const next = Math.max(0, Math.min(t, maxT));
       p.currentTime(next);
       setCurrent(next);
       onTimeUpdate?.(next);
+      playerSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     };
 
     window.addEventListener("vp:seek-to-time", onSeekToTime);
     return () => window.removeEventListener("vp:seek-to-time", onSeekToTime);
-  }, [duration, onTimeUpdate]);
+  }, [duration, onTimeUpdate, showTracked, trackedTimelineMap]);
 
   useEffect(() => {
     const onResetSchema = () => setSchemaFile(null);
@@ -326,21 +367,23 @@ export default function VideoPlayer({
 
   useEffect(() => {
     const onResize = () => {
+      const edge = 12;
+      const maxW = Math.max(300, window.innerWidth - edge * 2);
+      const maxH = Math.max(190, window.innerHeight - edge * 2);
+      setHeatmapSize((prev) => ({
+        width: clamp(prev.width, 300, maxW),
+        height: clamp(prev.height, 190, maxH),
+      }));
       setHeatmapPos((prev) => {
-        const el = heatmapWindowRef.current;
-        const rect = el?.getBoundingClientRect();
-        const width = rect?.width || 360;
-        const height = rect?.height || 220;
-        const edge = 12;
         return {
-          left: clamp(prev.left, edge, Math.max(edge, window.innerWidth - width - edge)),
-          top: clamp(prev.top, edge, Math.max(edge, window.innerHeight - height - edge)),
+          left: clamp(prev.left, edge, Math.max(edge, window.innerWidth - heatmapSize.width - edge)),
+          top: clamp(prev.top, edge, Math.max(edge, window.innerHeight - heatmapSize.height - edge)),
         };
       });
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [heatmapSize.width, heatmapSize.height]);
 
   const snapHeatmapToEdge = () => {
     const el = heatmapWindowRef.current;
@@ -359,24 +402,18 @@ export default function VideoPlayer({
 
   const onHeatmapDragStart = (e) => {
     if (e.button !== 0) return;
-    const el = heatmapWindowRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
     heatmapDragRef.current = {
-      dx: e.clientX - rect.left,
-      dy: e.clientY - rect.top,
+      dx: e.clientX - heatmapPos.left,
+      dy: e.clientY - heatmapPos.top,
     };
 
     const onMove = (ev) => {
       const drag = heatmapDragRef.current;
       if (!drag) return;
-      const r = heatmapWindowRef.current?.getBoundingClientRect();
-      const width = r?.width || 360;
-      const height = r?.height || 220;
       const edge = 12;
       setHeatmapPos({
-        left: clamp(ev.clientX - drag.dx, edge, Math.max(edge, window.innerWidth - width - edge)),
-        top: clamp(ev.clientY - drag.dy, edge, Math.max(edge, window.innerHeight - height - edge)),
+        left: clamp(ev.clientX - drag.dx, edge, Math.max(edge, window.innerWidth - heatmapSize.width - edge)),
+        top: clamp(ev.clientY - drag.dy, edge, Math.max(edge, window.innerHeight - heatmapSize.height - edge)),
       });
     };
 
@@ -385,6 +422,64 @@ export default function VideoPlayer({
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       snapHeatmapToEdge();
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const onHeatmapResizeStart = (e, corner) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const edge = 12;
+    const minW = 300;
+    const minH = 190;
+    heatmapResizeRef.current = {
+      corner,
+      startX: e.clientX,
+      startY: e.clientY,
+      startLeft: heatmapPos.left,
+      startTop: heatmapPos.top,
+      startWidth: heatmapSize.width,
+      startHeight: heatmapSize.height,
+    };
+
+    const onMove = (ev) => {
+      const r = heatmapResizeRef.current;
+      if (!r) return;
+      const dx = ev.clientX - r.startX;
+      const dy = ev.clientY - r.startY;
+      const maxW = Math.max(minW, window.innerWidth - edge * 2);
+      const maxH = Math.max(minH, window.innerHeight - edge * 2);
+
+      let nextLeft = r.startLeft;
+      let nextTop = r.startTop;
+      let nextWidth = r.startWidth;
+      let nextHeight = r.startHeight;
+
+      if (r.corner.includes("e")) nextWidth = clamp(r.startWidth + dx, minW, maxW);
+      if (r.corner.includes("s")) nextHeight = clamp(r.startHeight + dy, minH, maxH);
+      if (r.corner.includes("w")) {
+        nextWidth = clamp(r.startWidth - dx, minW, maxW);
+        nextLeft = r.startLeft + (r.startWidth - nextWidth);
+      }
+      if (r.corner.includes("n")) {
+        nextHeight = clamp(r.startHeight - dy, minH, maxH);
+        nextTop = r.startTop + (r.startHeight - nextHeight);
+      }
+
+      nextLeft = clamp(nextLeft, edge, Math.max(edge, window.innerWidth - nextWidth - edge));
+      nextTop = clamp(nextTop, edge, Math.max(edge, window.innerHeight - nextHeight - edge));
+
+      setHeatmapPos({ left: nextLeft, top: nextTop });
+      setHeatmapSize({ width: nextWidth, height: nextHeight });
+    };
+
+    const onUp = () => {
+      heatmapResizeRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
     };
 
     window.addEventListener("mousemove", onMove);
@@ -787,6 +882,7 @@ if (startTimesFile) {
       const data = await res.json();
       pushToast(data.message || "Done.", "success");
       onAnalysisComplete?.(data);
+      setTrackedTimelineMap(data.tracked_timeline_map || null);
 
       if (data.heatmap_video_url) {
         setHeatmapVideoUrl(`${backendUrl}${data.heatmap_video_url}`);
@@ -855,8 +951,7 @@ if (startTimesFile) {
       setShowHeatmap(false);
       return;
     }
-    const nextSide = (heatmapPos.left + 180) < (window.innerWidth / 2) ? "left" : "right";
-    setHeatmapPos(getDefaultHeatmapPos(nextSide));
+    setHeatmapPos(getDefaultHeatmapPos("right"));
     setShowHeatmap(true);
   };
   // =================== RENDER ===================
@@ -864,7 +959,7 @@ if (startTimesFile) {
   if (!hasSource) return null;
 
   return (
-    <section className="vp">
+    <section className="vp" ref={playerSectionRef}>
       {/* Player */}
 
       <div className="vp__videowrap" style={{ position: "relative" }}>
@@ -1067,10 +1162,13 @@ if (startTimesFile) {
         <div
           ref={heatmapWindowRef}
           className="vp__heatmapWindow"
-          style={{ left: heatmapPos.left, top: heatmapPos.top }}
+          style={{ left: heatmapPos.left, top: heatmapPos.top, width: heatmapSize.width, height: heatmapSize.height }}
         >
           <div className="vp__heatmapHeader" onMouseDown={onHeatmapDragStart}>
-            <span>Player Heatmap</span>
+            <div className="vp__heatmapTitleWrap">
+              <span className="vp__heatmapTitle">Player Heatmap</span>
+              <span className="vp__heatmapBadge">Synced</span>
+            </div>
             <button
               type="button"
               className="vp__heatmapClose"
@@ -1097,6 +1195,10 @@ if (startTimesFile) {
               if (isPlaying) hv.play().catch(() => { });
             }}
           />
+          <div className="vp__heatmapResize vp__heatmapResize--nw" onMouseDown={(e) => onHeatmapResizeStart(e, "nw")} />
+          <div className="vp__heatmapResize vp__heatmapResize--ne" onMouseDown={(e) => onHeatmapResizeStart(e, "ne")} />
+          <div className="vp__heatmapResize vp__heatmapResize--sw" onMouseDown={(e) => onHeatmapResizeStart(e, "sw")} />
+          <div className="vp__heatmapResize vp__heatmapResize--se" onMouseDown={(e) => onHeatmapResizeStart(e, "se")} />
         </div>
       )}
 

@@ -154,53 +154,80 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:Inter,ui-s
 .vp__toastClose:hover { color: var(--text); border-color: #3c4961; }
 .vp__heatmapWindow {
   position: fixed;
-  width: 360px;
-  height: 220px;
-  min-width: 260px;
-  min-height: 170px;
+  min-width: 300px;
+  min-height: 190px;
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 24px);
-  resize: both;
   overflow: hidden;
-  background: #030507;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 16px 32px rgba(0,0,0,0.45);
+  background: linear-gradient(180deg, #0b1119 0%, #060b12 100%);
+  border: 1px solid #334156;
+  border-radius: 12px;
+  box-shadow: 0 24px 50px rgba(0,0,0,0.5);
+  backdrop-filter: blur(6px);
   z-index: 1100;
 }
 .vp__heatmapHeader {
-  height: 34px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 8px;
-  background: #141b28;
-  border-bottom: 1px solid var(--line);
+  padding: 7px 10px;
+  background: linear-gradient(90deg, #15253a 0%, #1b2b45 100%);
+  border-bottom: 1px solid #334156;
   color: var(--text);
   font-size: 12px;
   cursor: move;
   user-select: none;
 }
+.vp__heatmapTitleWrap { display:flex; align-items:center; gap:8px; }
+.vp__heatmapTitle { font-weight: 600; letter-spacing: .2px; }
+.vp__heatmapBadge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(29, 94, 58, 0.35);
+  border: 1px solid #2f6d4a;
+  color: #a8e8c2;
+}
 .vp__heatmapClose {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
+  border: 1px solid #51637f;
   border-radius: 7px;
-  background: #25171a;
-  color: #ffb3b3;
+  background: rgba(12, 18, 30, 0.8);
+  color: #cdd9ef;
   cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
-.vp__heatmapClose:hover { background: #3a1f24; }
+.vp__heatmapClose:hover {
+  background: #2a3140;
+  color: #ffffff;
+  border-color: #6c7f9f;
+}
 .vp__heatmapVideo {
   width: 100%;
-  height: calc(100% - 34px);
+  height: calc(100% - 38px);
   background: black;
   object-fit: contain;
 }
+.vp__heatmapResize {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: rgba(98, 126, 170, 0.45);
+  border: 1px solid rgba(158, 183, 221, 0.65);
+  z-index: 2;
+}
+.vp__heatmapResize--nw { top: 2px; left: 2px; cursor: nwse-resize; }
+.vp__heatmapResize--ne { top: 2px; right: 2px; cursor: nesw-resize; }
+.vp__heatmapResize--sw { bottom: 2px; left: 2px; cursor: nesw-resize; }
+.vp__heatmapResize--se { bottom: 2px; right: 2px; cursor: nwse-resize; }
 
 /* === Scrubber + Dual Handles === */
 .vp__scrubwrap { position:relative; width:100%; height:22px; display:grid; align-items:center; }
