@@ -3,10 +3,8 @@ from tqdm import tqdm
 from .csv_process import CSVVideoInfoProcessor
 from .yolo_detection import ImageDetectionHelpers
 from .huddle_frame_process import HuddleFrameProcessor
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from team_learning_and_detection import TeamRepresentationLearning
+from utils.team_learning_and_detection import TeamRepresentationLearning
 
 class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
 
@@ -37,34 +35,22 @@ class FrameHandler(CSVVideoInfoProcessor, HuddleFrameProcessor):
         ''' 
             Converts a timestamp to frame number (time in seconds * fps).
             Args:
-                time: timestamp in format hh:mm:ss, mm:ss or ss (can include decimal seconds (1.1 = 1 minute 10 seconds))
+                time: timestamp in format hh:mm:ss.ms, mm:ss.ms or ss.ms
                 fps: frames per second of the video
             Returns:
                 int: frame number
         '''
-        # Check if time is split by colon or period
-        if ':' in timestamp:
-            timestamp = timestamp.replace(':', '.')
         # Splitting the timestamp to hours, minutes, seconds
-        timestamp_elements = timestamp.split('.')
-        # Adding missing elements if any (timestamp format can be ss, mm:ss, hh:mm:ss)
-        if len(timestamp_elements) == 1:
-            timestamp_elements.append('00')
+        timestamp_elements = timestamp.split(':')
         # Reversing to make calculations easier
-        timestamp_elements.reverse() 
-        # Converting decimal seconds to whole seconds
-        if len(timestamp_elements[0]) < 2:
-            if timestamp_elements[0] == '':
-                timestamp_elements[0] = 0
-            else:
-                timestamp_elements[0] = (int(timestamp_elements[0]) * 10) % 100
+        timestamp_elements.reverse()
         
         # Converting the timestamp to seconds
-        time_in_seconds = sum(int(x) * 60 ** i for i, x in enumerate(timestamp_elements))
+        time_in_seconds = sum(float(x) * 60 ** i for i, x in enumerate(timestamp_elements))
         # time_in_seconds = max(0, time_in_seconds - 0.2)     # Subtracting 0.2 seconds from the start time
         
         # Returning the time in frames (time in seconds * fps)
-        return int(time_in_seconds * fps)
+        return max(int(time_in_seconds * fps - 3), 0)
     
 
     # Defining huddle_frame to move_frame dict: {huddle_frame_number: [(move_tag, move_frame_num, down_number), ...], ...}
