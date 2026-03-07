@@ -65,6 +65,7 @@ npm start
 ## How to use (quick)
 
 1. **Load a video** (YouTube URL or MP4).
+   * If you load a YouTube URL, the server will automatically download (or reuse) `data/videos/NFL_Blitz/<youtube_id>.mp4` during **Analyze**.
 2. **Make a selection**:
 
    * Hold **Shift** and drag on the scrub bar **or**

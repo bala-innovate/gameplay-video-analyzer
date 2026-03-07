@@ -56,20 +56,9 @@ export default function VideoPlayer({
 
   // Analyze state
   const [analyzing, setAnalyzing] = useState(false);
-  const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0);
-  const [expectedAnalyzeMs, setExpectedAnalyzeMs] = useState(() => {
-    try {
-      const raw = localStorage.getItem("gva_analyze_avg_ms");
-      const n = Number(raw);
-      return Number.isFinite(n) && n > 0 ? n : 0;
-    } catch {
-      return 0;
-    }
-  });
   const [toasts, setToasts] = useState([]);
   const analyzeInFlightRef = useRef(false);
   const toastTimersRef = useRef(new Map());
-  const analyzeStartedAtRef = useRef(null);
 
   // Tracked video state
   const [trackedVideoUrl, setTrackedVideoUrl] = useState(null);
@@ -153,29 +142,6 @@ export default function VideoPlayer({
     const timer = setTimeout(() => dismissToast(id), durationMs);
     toastTimersRef.current.set(id, timer);
   };
-
-  useEffect(() => {
-    if (!analyzing || !analyzeStartedAtRef.current) return undefined;
-    const tick = () => setAnalysisElapsedMs(Math.max(0, Date.now() - analyzeStartedAtRef.current));
-    tick();
-    const id = setInterval(tick, 200);
-    return () => clearInterval(id);
-  }, [analyzing]);
-
-  const formatClock = (seconds) => {
-    if (!Number.isFinite(seconds) || seconds < 0) return "--:--";
-    const total = Math.round(seconds);
-    const mm = Math.floor(total / 60);
-    const ss = total % 60;
-    return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
-  };
-
-  const estimatedProgressPct = expectedAnalyzeMs > 0
-    ? Math.min(99.99, (analysisElapsedMs / expectedAnalyzeMs) * 100)
-    : null;
-  const estimatedEtaSec = expectedAnalyzeMs > 0
-    ? Math.max(0, (expectedAnalyzeMs - analysisElapsedMs) / 1000)
-    : null;
 
   // Receive annotation list from timeline
   useEffect(() => {
@@ -967,8 +933,6 @@ export default function VideoPlayer({
     try {
       analyzeInFlightRef.current = true;
       setAnalyzing(true);
-      analyzeStartedAtRef.current = Date.now();
-      setAnalysisElapsedMs(0);
       pushToast("Processing video (this may take several minutes)", "info", 4500);
 
       const formData = new FormData();
@@ -989,21 +953,9 @@ if (startTimesFile) {
       }
 
       const data = await res.json();
-      const runDurationMs = analyzeStartedAtRef.current ? (Date.now() - analyzeStartedAtRef.current) : null;
       pushToast(data.message || "Done.", "success");
       onAnalysisComplete?.(data);
       setTrackedTimelineMap(data.tracked_timeline_map || null);
-
-      // Keep a rolling expected runtime for on-screen estimated progress/ETA.
-      if (runDurationMs && runDurationMs > 0 && !data.cache_hit) {
-        const nextAvg = expectedAnalyzeMs > 0
-          ? Math.round(expectedAnalyzeMs * 0.6 + runDurationMs * 0.4)
-          : runDurationMs;
-        setExpectedAnalyzeMs(nextAvg);
-        try {
-          localStorage.setItem("gva_analyze_avg_ms", String(nextAvg));
-        } catch { }
-      }
 
       if (data.heatmap_video_url) {
         setHeatmapVideoUrl(`${backendUrl}${data.heatmap_video_url}`);
@@ -1037,8 +989,6 @@ if (startTimesFile) {
     } finally {
       setAnalyzing(false);
       analyzeInFlightRef.current = false;
-      analyzeStartedAtRef.current = null;
-      setAnalysisElapsedMs(0);
     }
   };
 
@@ -1214,22 +1164,6 @@ if (startTimesFile) {
               </button>
             </div>
 
-            {analyzing && (
-              <div className="vp__analyzeStatus" role="status" aria-live="polite">
-                <div className="vp__analyzeStatusRow">
-                  <span>Progress</span>
-                  <strong>{estimatedProgressPct != null ? `${estimatedProgressPct.toFixed(2)}%` : "--.--%"}</strong>
-                </div>
-                <div className="vp__analyzeStatusRow">
-                  <span>ETA</span>
-                  <strong>{estimatedEtaSec != null ? `${formatClock(estimatedEtaSec)} left` : "calculating..."}</strong>
-                </div>
-                <div className="vp__analyzeStatusRow">
-                  <span>Elapsed</span>
-                  <strong>{formatClock(analysisElapsedMs / 1000)}</strong>
-                </div>
-              </div>
-            )}
           </div>
         </div>
         {/* Scrubber + overlay */}

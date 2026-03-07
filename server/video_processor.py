@@ -109,6 +109,10 @@ def track_players(csv_name):
     move_annot_filepath = f'{MOVE_ANNOT_FOLDER}/{csv_name}'
     huddle_annot_filepath = f'{START_TIMES_ANNOT_FOLDER}/start times {csv_name}'
     frame_handler = FrameHandler(move_annot_filepath, huddle_annot_filepath, VIDEOS_DIR, yolo_model_path)
+    if not getattr(frame_handler, "video_exists_on_yt", False):
+        raise RuntimeError(f"Failed to download source video: {getattr(frame_handler, 'video_url', 'unknown')}")
+    if not hasattr(frame_handler, "huddle_to_moves_map"):
+        raise RuntimeError("Frame handler initialization failed before huddle mapping.")
 
     # ----------------  video setup  -------------------------
     cap = cv2.VideoCapture(frame_handler.video_path)

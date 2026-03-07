@@ -96,12 +96,13 @@ class CSVVideoInfoProcessor:
         
         ydl_opts = {
             'outtmpl': os.path.join(self.VIDEOS_DIR, '%(id)s.%(ext)s'),
-            'format': 'bestvideo+bestaudio/best',
+            'format': 'bv*+ba/b',
             'merge_output_format': 'mp4',
             'quiet': True,
             # 'verbose': True,           # extra debug
-            'cookiesfrombrowser': ('chrome'),
+            'cookiesfrombrowser': ('chrome',),
             'js_runtimes': {'node': {'executable': node_abs}},
+            'remote_components': ['ejs:github'],
         }
 
         try:

@@ -109,19 +109,6 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:Inter,ui-s
 .vp__timeActions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .vp__toolbarRight { display:grid; gap:8px; justify-items:end; }
 .vp__actionButtons { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; }
-.vp__analyzeStatus {
-  width: 100%;
-  min-width: 220px;
-  padding: 8px 10px;
-  border: 1px solid #3b475d;
-  border-radius: 10px;
-  background: #0f1420;
-  color: var(--muted);
-  font-size: 12px;
-}
-.vp__analyzeStatusRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-.vp__analyzeStatusRow strong { color: var(--text); font-weight: 600; }
-.vp__analyzeStatusRow + .vp__analyzeStatusRow { margin-top: 4px; }
 .vp__btnGroup { display:flex; gap:6px; background:#0c0f14; border:1px solid var(--line); border-radius:10px; padding:4px; }
 .vp__btnGroup button { display:flex; align-items:center; justify-content:center; width:34px; height:34px; background:transparent; color:var(--text); border:none; border-radius:8px; cursor:pointer; }
 .vp__btnGroup button:hover { background:#1a2332; }
