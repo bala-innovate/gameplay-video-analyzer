@@ -230,7 +230,7 @@ def track_players(csv_name):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
                     if side is not None:
                         # Bigger solid markers for better visibility.
-                        cv2.circle(heatmap_frame, (cx, cy), 7, colour, -1)
+                        cv2.circle(heatmap_frame, (cx, cy), 8, colour, -1)
                         side_points[side].append((cx, cy))
 
                 # Connect all players of the same side to each other (complete graph).
@@ -240,7 +240,7 @@ def track_players(csv_name):
                     line_colour = (0, 255, 0) if side == "A" else (0, 0, 255)
                     for i in range(len(pts)):
                         for j in range(i + 1, len(pts)):
-                            cv2.line(heatmap_frame, pts[i], pts[j], line_colour, 4, lineType=cv2.LINE_AA)
+                            cv2.line(heatmap_frame, pts[i], pts[j], line_colour, 2, lineType=cv2.LINE_AA)
             out.write(annotated)
             out_heatmap.write(heatmap_frame)
             if play_source_start is None:

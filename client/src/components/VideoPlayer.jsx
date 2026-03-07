@@ -56,9 +56,20 @@ export default function VideoPlayer({
 
   // Analyze state
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0);
+  const [expectedAnalyzeMs, setExpectedAnalyzeMs] = useState(() => {
+    try {
+      const raw = localStorage.getItem("gva_analyze_avg_ms");
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  });
   const [toasts, setToasts] = useState([]);
   const analyzeInFlightRef = useRef(false);
   const toastTimersRef = useRef(new Map());
+  const analyzeStartedAtRef = useRef(null);
 
   // Tracked video state
   const [trackedVideoUrl, setTrackedVideoUrl] = useState(null);
@@ -143,6 +154,29 @@ export default function VideoPlayer({
     toastTimersRef.current.set(id, timer);
   };
 
+  useEffect(() => {
+    if (!analyzing || !analyzeStartedAtRef.current) return undefined;
+    const tick = () => setAnalysisElapsedMs(Math.max(0, Date.now() - analyzeStartedAtRef.current));
+    tick();
+    const id = setInterval(tick, 200);
+    return () => clearInterval(id);
+  }, [analyzing]);
+
+  const formatClock = (seconds) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return "--:--";
+    const total = Math.round(seconds);
+    const mm = Math.floor(total / 60);
+    const ss = total % 60;
+    return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+  };
+
+  const estimatedProgressPct = expectedAnalyzeMs > 0
+    ? Math.min(99.99, (analysisElapsedMs / expectedAnalyzeMs) * 100)
+    : null;
+  const estimatedEtaSec = expectedAnalyzeMs > 0
+    ? Math.max(0, (expectedAnalyzeMs - analysisElapsedMs) / 1000)
+    : null;
+
   // Receive annotation list from timeline
   useEffect(() => {
     const onState = (e) => setAnnSnapshot(Array.isArray(e.detail?.annotations) ? e.detail.annotations : []);
@@ -191,6 +225,16 @@ export default function VideoPlayer({
     }
   };
   const isYT = isYouTube(src);
+
+  useEffect(() => {
+    const link = isYT ? src : "";
+    window.dispatchEvent(new CustomEvent("vp:set-schema-meta", {
+      detail: { title: "Manual Annotation", link, start: "", end: "" },
+    }));
+    window.dispatchEvent(new CustomEvent("vp:set-start-times-meta", {
+      detail: { title: "start times", link, start: "", end: "" },
+    }));
+  }, [src, isYT]);
 
   const pad2 = (n) => String(n).padStart(2, "0");
   const formatTime = (s) => {
@@ -592,39 +636,122 @@ export default function VideoPlayer({
   const rangeL = hasStart ? (hasEnd ? Math.min(selStart, selEnd) : selStart) : 0;
   const rangeR = hasSelection ? Math.max(selStart, selEnd) : 0;
 
-  // CSV schema parsing
+  // CSV schema/start-time parsing supports:
+  // - mm:ss
+  // - mm:ss.hh / mm:ss.hhh
+  // - legacy m.ss (where "2.5" means 2:50)
+  // - packed mmss (e.g. 136 => 1:36)
   const parseSchemaTime = (raw) => {
     if (raw == null) return null;
     const s = String(raw).trim();
     if (s === "") return null;
 
-    if (s.includes(".")) {
-      const [mStr, sStr] = s.split(".");
-      const minutes = Number(mStr);
-      const seconds = Number(sStr);
+    const parseSecondsWithFraction = (value) => {
+      const m = value.match(/^(\d+)(?:\.(\d{1,3}))?$/);
+      if (!m) return null;
+      const whole = Number(m[1]);
+      if (!Number.isFinite(whole)) return null;
+      let frac = 0;
+      if (m[2]) {
+        const scale = 10 ** m[2].length;
+        frac = Number(m[2]) / scale;
+      }
+      return whole + frac;
+    };
+
+    // mm:ss(.ff) or hh:mm:ss(.ff)
+    if (s.includes(":")) {
+      const parts = s.split(":").map((p) => p.trim());
+      if (parts.length !== 2 && parts.length !== 3) return null;
+
+      const sec = parseSecondsWithFraction(parts[parts.length - 1]);
+      if (sec == null || sec < 0 || sec >= 60) return null;
+
+      const mins = Number(parts[parts.length - 2]);
+      if (!Number.isFinite(mins) || mins < 0 || mins >= 60) return null;
+
+      let hrs = 0;
+      if (parts.length === 3) {
+        hrs = Number(parts[0]);
+        if (!Number.isFinite(hrs) || hrs < 0) return null;
+      }
+      return hrs * 3600 + mins * 60 + sec;
+    }
+
+    // Legacy m.ss or mm.ss format (base-60 seconds, not decimal seconds)
+    const legacy = s.match(/^(\d+)\.(\d{1,2})$/);
+    if (legacy) {
+      const minutes = Number(legacy[1]);
+      let seconds = Number(legacy[2]);
       if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
+      if (legacy[2].length === 1) seconds *= 10;
       if (seconds < 0 || seconds > 59) return null;
       return minutes * 60 + seconds;
     }
 
-    if (/^\d{2,3}$/.test(s)) {
+    // Packed mmss
+    if (/^\d{3,4}$/.test(s)) {
       const n = Number(s);
-      if (s.length === 2) {
-        const seconds = n % 100;
-        return seconds;
-      }
       const minutes = Math.floor(n / 100);
       const seconds = n % 100;
       if (seconds > 59) return null;
       return minutes * 60 + seconds;
     }
 
-    if (/^\d+$/.test(s)) {
-      const minutes = Number(s);
-      return minutes * 60;
+    // Plain seconds (integer/decimal)
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const seconds = Number(s);
+      return Number.isFinite(seconds) ? seconds : null;
     }
 
     return null;
+  };
+
+  const parseCSVLine = (line) => {
+    const out = [];
+    let cur = "";
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQ && line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQ = !inQ;
+        }
+      } else if (ch === "," && !inQ) {
+        out.push(cur);
+        cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur);
+    return out.map((cell) => cell.trim());
+  };
+
+  const readCsvMeta = (text, fallbackTitle = "") => {
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const first = parseCSVLine(lines[0] || "");
+    const title = (first[0] || fallbackTitle).trim();
+
+    const extractField = (label) => {
+      const row = lines.find((line) => {
+        const cols = parseCSVLine(line);
+        return (cols[0] || "").trim().toUpperCase() === label;
+      });
+      if (!row) return "";
+      const cols = parseCSVLine(row);
+      return (cols[1] || "").trim();
+    };
+
+    return {
+      title,
+      link: extractField("LINK -"),
+      start: extractField("START"),
+      end: extractField("END"),
+    };
   };
 
   // Load schema file
@@ -635,50 +762,39 @@ export default function VideoPlayer({
     // Clear current rows before importing a new CSV
     window.dispatchEvent(new CustomEvent("vp:clear-annotations"));
 
-    const lines = text.replace(/\r\n?/g, "\n").split("\n").filter(Boolean);
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const meta = readCsvMeta(text, "Manual Annotation");
+    window.dispatchEvent(new CustomEvent("vp:set-schema-meta", { detail: meta }));
 
-    const parseCSVLine = (line) => {
-      const out = [];
-      let cur = "",
-        inQ = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (ch === '"') {
-          if (inQ && line[i + 1] === '"') {
-            cur += '"';
-            i++;
-          } else {
-            inQ = !inQ;
-          }
-        } else if (ch === "," && !inQ) {
-          out.push(cur);
-          cur = "";
-        } else {
-          cur += ch;
-        }
-      }
-      out.push(cur);
-      return out.map((s) => s.trim());
-    };
+    const headerRowIdx = lines.findIndex((line) => {
+      const row = parseCSVLine(line).map((h) => h.toLowerCase());
+      return row.includes("tagname") && row.includes("starttime") && row.includes("endtime");
+    });
+    if (headerRowIdx === -1) {
+      console.warn("CSV missing required headers: TagName, StartTime, EndTime, Modifiers");
+      return;
+    }
 
-    const header = parseCSVLine(lines[5]).map((h) => h.toLowerCase());
+    const header = parseCSVLine(lines[headerRowIdx]).map((h) => h.toLowerCase());
     const idxTag = header.indexOf("tagname");
     const idxStart = header.indexOf("starttime");
     const idxEnd = header.indexOf("endtime");
     const idxMod = header.indexOf("modifiers");
+    const idxDown = header.indexOf("down");
 
     if (idxTag === -1 || idxStart === -1 || idxEnd === -1 || idxMod === -1) {
       console.warn("CSV missing required headers: TagName, StartTime, EndTime, Modifiers");
       return;
     }
 
-    for (let i = 1; i < lines.length; i++) {
+    for (let i = headerRowIdx + 1; i < lines.length; i++) {
       const cols = parseCSVLine(lines[i]);
       if (!cols.length) continue;
       const tag = (cols[idxTag] ?? "").trim();
       const startStr = cols[idxStart];
       const endStr = cols[idxEnd];
       const mod = (cols[idxMod] ?? "").trim();
+      const down = (cols[idxDown] ?? "").trim();
 
       const startSec = parseSchemaTime(startStr);
       const endSec = parseSchemaTime(endStr);
@@ -690,6 +806,7 @@ export default function VideoPlayer({
         end: endSec != null && isFinite(endSec) ? endSec : startSec,
         tag,
         modifier: mod,
+        down,
       };
 
       window.dispatchEvent(new CustomEvent("vp:add-annotation", { detail }));
@@ -705,10 +822,13 @@ export default function VideoPlayer({
 
     const text = await file.text();
     const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const meta = readCsvMeta(text, "start times");
+    window.dispatchEvent(new CustomEvent("vp:set-start-times-meta", { detail: meta }));
 
-    const cleaned = lines
-      .map((l) => l.split(",")[0].trim())
-      .filter(Boolean);
+    const cleaned = lines.map((line) => {
+      const cols = parseCSVLine(line);
+      return (cols[0] || "").trim();
+    }).filter(Boolean);
 
     const idx = cleaned.findIndex((line) => line.toLowerCase() === "timestamps");
     if (idx === -1) {
@@ -730,20 +850,7 @@ export default function VideoPlayer({
   };
 
   function parseStartTimeFormat(str) {
-  if (!str) return null;
-  const s = str.trim();
-
-  // mm:ss format
-  if (/^\d+:\d{1,2}$/.test(s)) {
-    const [mStr, sStr] = s.split(":");
-    const minutes = Number(mStr);
-    const seconds = Number(sStr);
-    if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
-    return minutes * 60 + seconds;
-  }
-
-
-  return null;
+    return parseSchemaTime(str);
   }
 
   const classifyCsvFile = async (file) => {
@@ -860,6 +967,8 @@ export default function VideoPlayer({
     try {
       analyzeInFlightRef.current = true;
       setAnalyzing(true);
+      analyzeStartedAtRef.current = Date.now();
+      setAnalysisElapsedMs(0);
       pushToast("Processing video (this may take several minutes)", "info", 4500);
 
       const formData = new FormData();
@@ -880,9 +989,21 @@ if (startTimesFile) {
       }
 
       const data = await res.json();
+      const runDurationMs = analyzeStartedAtRef.current ? (Date.now() - analyzeStartedAtRef.current) : null;
       pushToast(data.message || "Done.", "success");
       onAnalysisComplete?.(data);
       setTrackedTimelineMap(data.tracked_timeline_map || null);
+
+      // Keep a rolling expected runtime for on-screen estimated progress/ETA.
+      if (runDurationMs && runDurationMs > 0 && !data.cache_hit) {
+        const nextAvg = expectedAnalyzeMs > 0
+          ? Math.round(expectedAnalyzeMs * 0.6 + runDurationMs * 0.4)
+          : runDurationMs;
+        setExpectedAnalyzeMs(nextAvg);
+        try {
+          localStorage.setItem("gva_analyze_avg_ms", String(nextAvg));
+        } catch { }
+      }
 
       if (data.heatmap_video_url) {
         setHeatmapVideoUrl(`${backendUrl}${data.heatmap_video_url}`);
@@ -916,6 +1037,8 @@ if (startTimesFile) {
     } finally {
       setAnalyzing(false);
       analyzeInFlightRef.current = false;
+      analyzeStartedAtRef.current = null;
+      setAnalysisElapsedMs(0);
     }
   };
 
@@ -991,29 +1114,55 @@ if (startTimesFile) {
 
       {/* Toolbar */}
       <div className="vp__controls">
-        <div className="vp__toolbar" style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: "12px" }}>
-          <div className="vp__time" style={{ justifySelf: "start", display: "flex", alignItems: "center", gap: 6 }}>
-            <input
-              className="mono"
-              value={timeEdit}
-              onChange={(e) => setTimeEdit(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitTimeEdit();
-                }
-                if (e.key === "Escape") {
-                  setTimeEdit(formatTime(current));
-                }
-              }}
-              onBlur={() => setTimeEdit(formatTime(current))}
-              aria-label="Current time (editable)"
-              style={{ width: 84, padding: "2px 6px", borderRadius: 6, border: "1px solid var(--line)", background: "#0f1420", color: "var(--text)" }}
-              inputMode="numeric"
-              placeholder="mm:ss.hh"
-            />
-            <span className="vp__timeSep">/</span>
-            <span className="vp__timeTotal mono">{formatTime(duration)}</span>
+        <div className="vp__toolbar">
+          <div className="vp__toolbarLeft">
+            <div className="vp__time">
+              <input
+                className="mono"
+                value={timeEdit}
+                onChange={(e) => setTimeEdit(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitTimeEdit();
+                  }
+                  if (e.key === "Escape") {
+                    setTimeEdit(formatTime(current));
+                  }
+                }}
+                onBlur={() => setTimeEdit(formatTime(current))}
+                aria-label="Current time (editable)"
+                style={{ width: 84, padding: "2px 6px", borderRadius: 6, border: "1px solid var(--line)", background: "#0f1420", color: "var(--text)" }}
+                inputMode="numeric"
+                placeholder="mm:ss.hh"
+              />
+              <span className="vp__timeSep">/</span>
+              <span className="vp__timeTotal mono">{formatTime(duration)}</span>
+            </div>
+            <div className="vp__timeActions">
+              {trackedVideoUrl && (
+                <button
+                  className={`src__btn ${showTracked ? "src__btn--active" : ""}`}
+                  type="button"
+                  onClick={toggleTrackedVideo}
+                  disabled={analyzing}
+                  title={showTracked ? "Switch to original video" : "Switch to tracked video"}
+                >
+                  {showTracked ? "Original" : "Tracked"}
+                </button>
+              )}
+              {heatmapVideoUrl && (
+                <button
+                  className={`src__btn ${showHeatmap ? "src__btn--active" : ""}`}
+                  type="button"
+                  onClick={toggleHeatmapWindow}
+                  disabled={analyzing}
+                  title={!showTracked ? "Switch to tracked video first" : (showHeatmap ? "Close heatmap window" : "Open heatmap window")}
+                >
+                  {showHeatmap ? "Close Heatmap" : "Heatmap"}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="vp__btnGroup" role="group" aria-label="Playback" style={{ justifySelf: "center" }}>
@@ -1028,64 +1177,58 @@ if (startTimesFile) {
             </button>
           </div>
 
-          <div style={{ justifySelf: "end", display: "flex", gap: 8, alignItems: "center" }}>
-            <button
-  className="src__btn"
-  type="button"
-  onClick={() => {
-    window.dispatchEvent(new CustomEvent("vp:add-start-time", { 
-      detail: { time: current } 
-    }));
-  }}
->
-  Add Start Time
-</button>
-
-            <input
-              ref={dataInputRef}
-              type="file"
-              accept=".csv,text/csv"
-              multiple
-              hidden
-              onChange={onDataFilesChange}
-            />
-            <button className="src__btn" type="button" onClick={onClickLoadData} title="Load schema and start times CSVs together">
-              Load Data
-            </button>
-
-            <button
-              className="src__btn"
-              type="button"
-              onClick={runAnalysis}
-              disabled={!schemaLoaded || !schemaFile || !startTimesFile || analyzing}
-              title={!schemaFile || !startTimesFile ? "Load Data (schema + start times) first" : analyzing ? "Analyzing…" : "Analyze"}
-            >
-              {analyzing ? "Analyzing…" : "Analyze"}
-            </button>
-
-            {trackedVideoUrl && (
+          <div className="vp__toolbarRight">
+            <div className="vp__actionButtons">
               <button
-                className={`src__btn ${showTracked ? "src__btn--active" : ""}`}
+                className="src__btn"
                 type="button"
-                onClick={toggleTrackedVideo}
-                disabled={analyzing}
-                title={showTracked ? "Switch to original video" : "Switch to tracked video"}
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("vp:add-start-time", {
+                    detail: { time: current }
+                  }));
+                }}
               >
-                {showTracked
-                  ? (trackedReady ? "Tracked" : "Loading Tracked…")
-                  : "Original"}
+                Add Start Time
               </button>
-            )}
-            {heatmapVideoUrl && (
+
+              <input
+                ref={dataInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                multiple
+                hidden
+                onChange={onDataFilesChange}
+              />
+              <button className="src__btn" type="button" onClick={onClickLoadData} title="Load schema and start times CSVs together">
+                Load Data
+              </button>
+
               <button
-                className={`src__btn ${showHeatmap ? "src__btn--active" : ""}`}
+                className="src__btn"
                 type="button"
-                onClick={toggleHeatmapWindow}
-                disabled={analyzing}
-                title={!showTracked ? "Switch to tracked video first" : (showHeatmap ? "Close heatmap window" : "Open heatmap window")}
+                onClick={runAnalysis}
+                disabled={!schemaLoaded || !schemaFile || !startTimesFile || analyzing}
+                title={!schemaFile || !startTimesFile ? "Load Data (schema + start times) first" : analyzing ? "Analyzing…" : "Analyze"}
               >
-                {showHeatmap ? "Close Heatmap" : "Heatmap"}
+                {analyzing ? "Analyzing…" : "Analyze"}
               </button>
+            </div>
+
+            {analyzing && (
+              <div className="vp__analyzeStatus" role="status" aria-live="polite">
+                <div className="vp__analyzeStatusRow">
+                  <span>Progress</span>
+                  <strong>{estimatedProgressPct != null ? `${estimatedProgressPct.toFixed(2)}%` : "--.--%"}</strong>
+                </div>
+                <div className="vp__analyzeStatusRow">
+                  <span>ETA</span>
+                  <strong>{estimatedEtaSec != null ? `${formatClock(estimatedEtaSec)} left` : "calculating..."}</strong>
+                </div>
+                <div className="vp__analyzeStatusRow">
+                  <span>Elapsed</span>
+                  <strong>{formatClock(analysisElapsedMs / 1000)}</strong>
+                </div>
+              </div>
             )}
           </div>
         </div>

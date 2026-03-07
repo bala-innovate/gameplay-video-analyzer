@@ -3,6 +3,12 @@ import { MdChevronLeft, MdChevronRight } from "react-icons/md";
 
 export default function AnnotationTimeline({ currentTime = 0, hasSource, hideTitle = false }) {
   const [annotations, setAnnotations] = useState([]);
+  const [schemaMeta, setSchemaMeta] = useState({
+    title: "Manual Annotation",
+    link: "",
+    start: "",
+    end: "",
+  });
 
   useEffect(() => { if (!hasSource) setAnnotations([]); }, [hasSource]);
 
@@ -10,6 +16,32 @@ export default function AnnotationTimeline({ currentTime = 0, hasSource, hideTit
     const onClear = () => setAnnotations([]);
     window.addEventListener("vp:clear-annotations", onClear);
     return () => window.removeEventListener("vp:clear-annotations", onClear);
+  }, []);
+
+  useEffect(() => {
+    const onMeta = (e) => {
+      const detail = e.detail || {};
+      setSchemaMeta({
+        title: detail.title || "Manual Annotation",
+        link: detail.link || "",
+        start: detail.start || "",
+        end: detail.end || "",
+      });
+    };
+    const onClearMeta = () => {
+      setSchemaMeta({
+        title: "Manual Annotation",
+        link: "",
+        start: "",
+        end: "",
+      });
+    };
+    window.addEventListener("vp:set-schema-meta", onMeta);
+    window.addEventListener("vp:reset-schema", onClearMeta);
+    return () => {
+      window.removeEventListener("vp:set-schema-meta", onMeta);
+      window.removeEventListener("vp:reset-schema", onClearMeta);
+    };
   }, []);
 
   if (!hasSource) return null;
@@ -147,8 +179,15 @@ export default function AnnotationTimeline({ currentTime = 0, hasSource, hideTit
       const s = v == null ? "" : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const header = ["TagName","StartTime","EndTime","Modifiers","Down"];
-    const lines = [header.join(",")];
+    const header = ["TagName", "StartTime", "EndTime", "Modifiers", "Down"];
+    const lines = [
+      `${esc(schemaMeta.title)},,,,`,
+      `${esc("LINK -")},${esc(schemaMeta.link)},,,`,
+      `${esc("START")},${esc(schemaMeta.start)},,,`,
+      `${esc("END")},${esc(schemaMeta.end)},,,`,
+      ",,,,",
+      header.join(","),
+    ];
     for (const r of rows) {
       const rowOut = [
         esc(r.tagName ?? ""),
