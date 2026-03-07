@@ -13,79 +13,54 @@ from config import *
 from ultralytics import YOLO
 import numpy as np
 
-# ----------  NEW:  find snap frame inside 1-second window ----------
-def find_snap_frame(cap, huddle_model, start_frame, fps):
-    """
-    Returns the last frame BEFORE players start moving (snap).
-    cap: opened cv2.VideoCapture
-    huddle_model: your huddle-detection YOLO
-    start_frame: csv / annot start-of-huddle
-    fps: video fps
-    """
-    window = int(fps)                      # 1 second
-    coarse_step = max(1, int(fps // 5))    # every 200 ms
-    conf_thresh = 0.3
-    min_num_players_required = 8
 
-    # 1.  coarse search – huddle confidence drop
-    candidates = []
-    for offset in range(0, window, coarse_step):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame + offset)
-        ret, frm = cap.read()
-        if not ret:
-            break
-        res = huddle_model(frm, verbose=False)[0]
-        if len(res) < min_num_players_required:
-            continue
-        conf = res.boxes.conf.max().item() if res.boxes else 0.0
-        candidates.append((start_frame + offset, conf))
-    # last frame with conf > thresh
-    last_high = None
-    for frm, conf in candidates:
-        if conf > conf_thresh:
-            last_high = frm
-        else:
-            break
-    if last_high is None:
-        last_high = start_frame + window // 2   # fallback
-
-    # 2.  fine search – optical-flow jump in ±½ second
-    fine_window = int(fps // 2)
-    flow_mag = []
-    prev = None
-    for frm_idx in range(last_high - fine_window, last_high + fine_window):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frm_idx)
-        ret, frm = cap.read()
-        if not ret:
-            break
-        gray = cv2.cvtColor(frm, cv2.COLOR_BGR2GRAY)
-        if prev is None:
-            prev = gray
-            continue
-        flow = cv2.calcOpticalFlowFarneback(prev, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
-        mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-        flow_mag.append((frm_idx, mag.mean()))
-        prev = gray
-
-    # largest jump
-    if flow_mag:
-        snap_frame, _ = max(flow_mag, key=lambda x: x[1])
-        # snap_frame is the FIRST big motion → last *quiet* frame is one before
-        return snap_frame - 1
-    else:
-        return last_high   # fallback
-    
 # ----------  convert to browser-playable H.264 ----------
+def get_available_encoders():
+    """Return a list of available FFmpeg encoders."""
+    result = subprocess.run(
+        ["ffmpeg", "-encoders"],
+        capture_output=True,
+        text=True
+    )
+    return result.stdout
+
+def detect_best_h264_encoder():
+    """Pick the fastest available H.264 encoder."""
+    encoders = get_available_encoders()
+    print(encoders)
+
+    priority = [
+        "h264_videotoolbox",  # macOS hardware
+        "h264_nvenc",         # NVIDIA GPU
+        "h264_qsv",           # Intel Quick Sync
+        "h264_amf",           # AMD GPU
+        "libx264"             # CPU fallback
+    ]
+
+    for encoder in priority:
+        if encoder in encoders:
+            return encoder
+
+    raise RuntimeError("No H.264 encoder found in ffmpeg")
+
 def convert_to_h264(input_path, output_path):
-    """Re-encode an OpenCV mp4v video to H.264 so browsers can play it."""
-    subprocess.run([
-        'ffmpeg', '-y', '-i', input_path,
-        '-c:v', 'h264_videotoolbox', '-b:v', '5M',
-        '-pix_fmt', 'yuv420p',
-        '-movflags', '+faststart',
+    encoder = detect_best_h264_encoder()
+    print(encoder)
+    print(f"Using encoder: {encoder}")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-c:v", encoder,
+        "-b:v", "5M",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
         output_path
-    ], check=True, capture_output=True)
+    ]
+
+    subprocess.run(cmd, check=True)
     os.remove(input_path)
+    return
 
 # ---------------- helpers -----------------------
 def iou(b1, b2):
@@ -95,7 +70,6 @@ def iou(b1, b2):
     area1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
     area2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
     return inter / (area1 + area2 - inter + 1e-6)
-
 
 def _assign_role_bands(id_to_side, id_to_initial_y):
     """
@@ -128,8 +102,8 @@ def track_players(csv_name):
     # ----------------  models  ------------------------------
     model = YOLO("./models/yolo11m.pt")          # tracker
     huddle_detection = YOLO("./models/best_huddle_detection.pt")
-    yolo_model_path = './models/yolo26m.pt'
-    tracker = "bytetrack.yaml"
+    yolo_model_path = './models/yolo11m.pt'
+    tracker = "./models/my_bytetrack.yaml"
 
     # ----------------  data loader  -------------------------
     move_annot_filepath = f'{MOVE_ANNOT_FOLDER}/{csv_name}'
@@ -160,7 +134,7 @@ def track_players(csv_name):
             continue
 
         # 1) find exact snap frame inside 1-second window
-        last_huddle_frame = find_snap_frame(cap, huddle_detection, start_time_frame, fps)
+        last_huddle_frame = start_time_frame
         last_frame  = moves[-1][1]
         play_source_start = None
         play_source_end = None
