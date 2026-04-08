@@ -138,7 +138,7 @@ class Tracking:
                 ret, frame = self.cap.read()
                 if not ret:
                     break
-
+  
                 # ----------------- 1) label on snap frame -----------------
                 if frame_idx == start_time_frame:
                     snap_results = self.track_model.track(frame, imgsz=self.track_img_size, conf=self.track_conf, iou=self.track_iou, 
@@ -187,9 +187,11 @@ class Tracking:
                     "tracked_start_frame": int(play_output_start),
                     "tracked_end_frame": int(output_frame_idx - 1),
                 })
-        
-            self.track_model.predictor.trackers[0].reset()
             
+            # Reset tracker for following play
+            self.track_model.predictor.trackers[0].reset()
+        
+        # Release all videos to save them
         self.cap.release()
         self.out.release()
         self.out_heatmap.release()
@@ -212,7 +214,7 @@ class Tracking:
         return moves_2_defenderCount_dict, moves_2_timeSincePlayBegan, self.output_video_path, self.heatmap_video_path, tracked_timeline_map_path
 
 
-
+#### Original function
 # def track_players(csv_name):
 #     # ----------------  models  ------------------------------
 #     model = YOLO("./models/yolo11m.pt")          # tracker
