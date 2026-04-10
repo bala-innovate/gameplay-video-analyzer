@@ -3,6 +3,12 @@ import { MdChevronLeft, MdChevronRight } from "react-icons/md";
 
 export default function StartTimesTimeline({ hasSource, hideTitle = false }) {
   const [rows, setRows] = useState([]);
+  const [startMeta, setStartMeta] = useState({
+    title: "start times",
+    link: "",
+    start: "",
+    end: "",
+  });
 
   useEffect(() => {
     if (!hasSource) setRows([]);
@@ -12,6 +18,32 @@ export default function StartTimesTimeline({ hasSource, hideTitle = false }) {
   window.addEventListener("vp:clear-start-times", clear);
   return () => window.removeEventListener("vp:clear-start-times", clear);
 }, []);
+
+  useEffect(() => {
+    const onMeta = (e) => {
+      const detail = e.detail || {};
+      setStartMeta({
+        title: detail.title || "start times",
+        link: detail.link || "",
+        start: detail.start || "",
+        end: detail.end || "",
+      });
+    };
+    const onClearMeta = () => {
+      setStartMeta({
+        title: "start times",
+        link: "",
+        start: "",
+        end: "",
+      });
+    };
+    window.addEventListener("vp:set-start-times-meta", onMeta);
+    window.addEventListener("vp:reset-start-times", onClearMeta);
+    return () => {
+      window.removeEventListener("vp:set-start-times-meta", onMeta);
+      window.removeEventListener("vp:reset-start-times", onClearMeta);
+    };
+  }, []);
 
   // Listen for add-start-time events
   useEffect(() => {
@@ -98,9 +130,20 @@ export default function StartTimesTimeline({ hasSource, hideTitle = false }) {
   };
 
   const toCSV = () => {
-    let csv = "StartTime\n";
-    for (const r of rows)  csv += `${fmtExport(r.raw)}\n`; 
-    return csv;
+    const esc = (v) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [
+      `${esc(startMeta.title)},`,
+      `${esc("LINK -")},${esc(startMeta.link)}`,
+      `${esc("START")},${esc(startMeta.start)}`,
+      `${esc("END")},${esc(startMeta.end)}`,
+      ",",
+      `${esc("Timestamps")},`,
+    ];
+    for (const r of rows) lines.push(`${fmtExport(r.raw)},`);
+    return lines.join("\n");
   };
 
   const exportCSV = () =>

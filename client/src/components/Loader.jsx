@@ -61,7 +61,6 @@ export default function Loader({ onLoad }) {
             />
             <button className="src__btn" onClick={loadFromUrl} disabled={!urlInput.trim()}>Load</button>
           </div>
-          <div className="src__hint">YouTube sources can be analyzed on the server after loading schema/start-times data.</div>
         </div>
       )}
     </section>
